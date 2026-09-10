@@ -13,7 +13,7 @@
 // look real but aren't derived from anything — worse than not running them.
 // So only `crypto_baseline` has a real adapter for now; engine.js reports
 // "no_indicator_adapter" for any other strategy rather than pretending.
-import { ema, rsi } from './indicators.js';
+import { ema, rsi, emaBollingerBands } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
   const closes = candles.map((c) => c.close);
@@ -32,9 +32,42 @@ function buildCryptoBaseline(candles) {
   };
 }
 
+// crypto_bb_rsi_trendfilter — fully close-only derivable: EMA(200)-based
+// Bollinger(0.2 stddev) as a trend filter + RSI(3) 20/80 cross. The strategy
+// file itself already degrades rsi3_cross to a level check if the cross
+// booleans are absent, but real cross detection (previous bar was on the far
+// side of the level, current bar crossed through it) is straightforward from
+// closes alone, so it's computed properly here rather than relying on that
+// degrade path.
+function buildCryptoBbRsiTrendfilter(candles) {
+  const closes = candles.map((c) => c.close);
+  const { upper, lower } = emaBollingerBands(closes, 200, 0.2);
+  const rsi3 = rsi(closes, 3);
+
+  return function signalAt(i, direction) {
+    if (i < 1) return null;
+    if (!Number.isFinite(upper[i]) || !Number.isFinite(lower[i]) || !Number.isFinite(rsi3[i]) || !Number.isFinite(rsi3[i - 1]))
+      return null;
+    const rsi3CrossUp = rsi3[i - 1] < 20 && rsi3[i] >= 20;
+    const rsi3CrossDown = rsi3[i - 1] > 80 && rsi3[i] <= 80;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      bb_upper: upper[i],
+      bb_lower: lower[i],
+      rsi3: rsi3[i],
+      rsi3_cross_up: rsi3CrossUp,
+      rsi3_cross_down: rsi3CrossDown,
+    };
+  };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
+  crypto_bb_rsi_trendfilter: buildCryptoBbRsiTrendfilter,
+  crypto_bb_rsi_trendfilter_sl: buildCryptoBbRsiTrendfilter,
 };
 
 export function getAdapter(strategyId) {
