@@ -9,7 +9,7 @@
 // backtestable yet (their factors gate on Pine-side semantic flags, not
 // plain OHLC-derived indicators, and CoinGecko's free OHLC has no volume).
 import { getStrategy } from '../strategies/index.js';
-import { getAdapter } from './adapters.js';
+import { getAdapter, PARTIAL_ADAPTERS } from './adapters.js';
 import { fetchHistoricalCandles, assetClassFor } from './candles.js';
 import { resolveWindow } from './window.js';
 import { computeMetrics } from './metrics.js';
@@ -234,6 +234,7 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       apiLimited, // true if clamped specifically by CoinGecko's 365-day free-tier cap, not the asset's minStartDate
     },
     candleCount: candles.length,
+    partialAdapter: PARTIAL_ADAPTERS[strategyId] ?? null,
     metrics,
     trades: trades.map((t) => ({
       direction: t.direction,

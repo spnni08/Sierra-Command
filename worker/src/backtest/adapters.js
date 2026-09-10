@@ -13,7 +13,7 @@
 // look real but aren't derived from anything — worse than not running them.
 // So only `crypto_baseline` has a real adapter for now; engine.js reports
 // "no_indicator_adapter" for any other strategy rather than pretending.
-import { ema, rsi, emaBollingerBands } from './indicators.js';
+import { ema, rsi, emaBollingerBands, bollingerBands } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
   const closes = candles.map((c) => c.close);
@@ -63,11 +63,75 @@ function buildCryptoBbRsiTrendfilter(candles) {
   };
 }
 
+// crypto_sr_bollinger — the real Pine trigger needs a wick to pierce the
+// band while the close stays inside it (a true intrabar bounce). This
+// project's synthesized crypto candles have open=high=low=close (CoinGecko
+// /market_chart is a daily close series, no real intrabar range — see
+// candles.js), so `low <= bbLower && close > bbLower` is structurally
+// impossible when low===close (it would require close <= bbLower AND
+// close > bbLower at once). A genuine wick-touch trigger cannot be computed
+// from this data at all.
+//
+// PARTIAL, documented substitute used here instead: a close-only 2-bar
+// cross-back proxy — previous close was outside the band, current close is
+// back inside it. This captures the same "band rejection then reclaim"
+// idea the real strategy trades, but on daily closes rather than intrabar
+// wicks, so it will trigger on genuinely different (and likely fewer/later)
+// bars than the real Pine strategy would. Flagged as a partial adapter (see
+// PARTIAL_ADAPTERS below) rather than presented as equivalent.
+function buildCryptoSrBollinger(candles) {
+  const closes = candles.map((c) => c.close);
+  const { upper, lower } = bollingerBands(closes, 20, 2);
+  const ema200 = ema(closes, 200);
+
+  return function signalAt(i, direction) {
+    if (i < 1) return null;
+    if (
+      !Number.isFinite(upper[i]) ||
+      !Number.isFinite(lower[i]) ||
+      !Number.isFinite(ema200[i]) ||
+      !Number.isFinite(closes[i - 1])
+    )
+      return null;
+    const bounceLong = closes[i - 1] < lower[i - 1] && closes[i] > lower[i];
+    const bounceShort = closes[i - 1] > upper[i - 1] && closes[i] < upper[i];
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      // low/high intentionally omitted: with flat synthesized OHLC they'd
+      // equal close and make the strategy's own wick-touch check trivially
+      // pass/fail in a misleading way. The proxy below feeds the real
+      // strategy factor via bb_lower/bb_upper positioned so its close-only
+      // comparison (low <= bbLower / high >= bbUpper) reads correctly only
+      // when the proxy condition is true.
+      low: direction === 'long' && bounceLong ? lower[i] : closes[i],
+      high: direction === 'short' && bounceShort ? upper[i] : closes[i],
+      bb_lower: lower[i],
+      bb_upper: upper[i],
+      ema200: ema200[i],
+    };
+  };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
   crypto_bb_rsi_trendfilter: buildCryptoBbRsiTrendfilter,
   crypto_bb_rsi_trendfilter_sl: buildCryptoBbRsiTrendfilter,
+  crypto_sr_bollinger: buildCryptoSrBollinger,
+  crypto_sr_bollinger_sl: buildCryptoSrBollinger,
+};
+
+// Strategies whose adapter above is a documented simplification rather than
+// a faithful reproduction of the Pine-side trigger — surfaced in the
+// backtest response (see engine.js) so results aren't mistaken for
+// full-fidelity ones.
+export const PARTIAL_ADAPTERS = {
+  crypto_sr_bollinger:
+    'Real Pine trigger needs a wick to pierce the Bollinger band while the close stays inside (true intrabar bounce). This backtest uses daily close-only candles (no real intrabar range), so a close-only 2-bar cross-back-inside-the-band proxy is used instead — same "rejection then reclaim" idea, but triggers on different/fewer bars than the real intrabar strategy would.',
+  crypto_sr_bollinger_sl:
+    'Real Pine trigger needs a wick to pierce the Bollinger band while the close stays inside (true intrabar bounce). This backtest uses daily close-only candles (no real intrabar range), so a close-only 2-bar cross-back-inside-the-band proxy is used instead — same "rejection then reclaim" idea, but triggers on different/fewer bars than the real intrabar strategy would.',
 };
 
 export function getAdapter(strategyId) {
