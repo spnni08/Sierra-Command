@@ -13,7 +13,7 @@ const TABS = [
 const tabBtn = {
   position: 'relative', background: 'transparent', border: 0, borderRight: '1px solid var(--line)',
   color: 'var(--txt)', fontFamily: 'inherit', fontSize: 11, letterSpacing: '0.06em', padding: '0 16px',
-  cursor: 'pointer', textTransform: 'uppercase', height: '100%',
+  cursor: 'pointer', textTransform: 'uppercase', height: '100%', whiteSpace: 'nowrap', flexShrink: 0,
 };
 
 export default function Header({ page, setPage }) {
@@ -22,16 +22,16 @@ export default function Header({ page, setPage }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--panel)', borderBottom: '1px solid var(--line)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '0 14px 0 12px', borderRight: '1px solid var(--line)' }}>
-          <div style={{ width: 13, height: 13, background: 'var(--acc)' }} />
+      <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--panel)', borderBottom: '1px solid var(--line)', height: 38, overflowX: 'auto', overflowY: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '0 14px 0 12px', borderRight: '1px solid var(--line)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+          <div style={{ width: 13, height: 13, background: 'var(--acc)', flexShrink: 0 }} />
           <div style={{ fontWeight: 700, letterSpacing: '0.14em', fontSize: 12 }}>
             SIERRA<span style={{ color: 'var(--txt3)', fontWeight: 500 }}> COMMAND</span>
           </div>
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt3)', border: '1px solid var(--line)', padding: '1px 4px' }}>v4.2.1</div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'stretch' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', flexShrink: 0 }}>
           {TABS.map(t => (
             <button key={t.key} onClick={() => setPage(t.key)} style={tabBtn}>
               {t.label}
@@ -42,9 +42,9 @@ export default function Header({ page, setPage }) {
           ))}
         </div>
 
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1, minWidth: 12 }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 0, borderLeft: '1px solid var(--line)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 0, borderLeft: '1px solid var(--line)', flexShrink: 0, whiteSpace: 'nowrap' }}>
           <div style={{ padding: '0 10px', fontSize: 10, color: 'var(--txt3)', letterSpacing: '0.08em' }}>ANSICHT</div>
           <button onClick={setPro} style={{ ...tabBtn, borderLeft: '1px solid var(--line)', fontSize: 11, padding: '0 12px' }}>
             Professionell
@@ -64,7 +64,7 @@ export default function Header({ page, setPage }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--panel2)', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--panel2)', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, height: 30, overflowX: 'auto', overflowY: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
           <div style={{ padding: '0 10px', color: 'var(--txt3)', letterSpacing: '0.08em', borderRight: '1px solid var(--line)', lineHeight: '29px' }}>MÄRKTE</div>
           {TICKER.map(t => (
