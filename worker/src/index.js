@@ -3,6 +3,7 @@ import { handleOandaRoute } from './routes/oanda.js';
 import { handleAlphaVantageRoute } from './routes/alphavantage.js';
 import { handleApiRoute } from './routes/api.js';
 import { handleSimulationRoute } from './routes/simulation.js';
+import { handleWebhookRoute } from './routes/webhook.js';
 import { withCors, handlePreflight } from './cors.js';
 
 export default {
@@ -27,6 +28,8 @@ export default {
         response = await handleApiRoute(request, url, env);
       } else if (url.pathname.startsWith('/simulation')) {
         response = await handleSimulationRoute(request, url, env);
+      } else if (url.pathname.startsWith('/webhook')) {
+        response = await handleWebhookRoute(request, url, env);
       } else {
         response = Response.json({ error: 'not_found' }, { status: 404 });
       }
