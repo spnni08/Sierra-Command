@@ -4,6 +4,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'https://sierra-command.web.app',
   'https://sierra-command.firebaseapp.com',
+  'https://sierra-command-1.web.app',
+  'https://sierra-command-1.firebaseapp.com',
 ];
 
 export function corsHeaders(request, env) {
