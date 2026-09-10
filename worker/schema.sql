@@ -126,6 +126,13 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_related_trade_id ON activity_log(rel
 -- from any D1 instance that was already seeded before the 22-strategy
 -- migration (INSERT OR IGNORE below never touches pre-existing rows, so a
 -- live database would otherwise keep these 3 alongside the 22 real ones).
+-- backtest_runs.strategy_id is a NOT NULL FK with no ON DELETE clause, and
+-- the original seed data had backtest_runs rows (seed-bt-1/2/3) referencing
+-- these placeholder ids — deleting strategies first broke every deploy
+-- since this migration landed ("FOREIGN KEY constraint failed", silently
+-- failing before `wrangler deploy` ever ran). Clear the dependent rows
+-- first.
+DELETE FROM backtest_runs WHERE strategy_id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
 DELETE FROM strategy_settings WHERE strategy_id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
 DELETE FROM strategies WHERE id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
 
