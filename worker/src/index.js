@@ -1,4 +1,4 @@
-import { handleKrakenRoute } from './routes/kraken.js';
+import { handleBinanceRoute } from './routes/binance.js';
 import { handleOandaRoute } from './routes/oanda.js';
 import { withCors, handlePreflight } from './cors.js';
 
@@ -14,8 +14,8 @@ export default {
     try {
       if (url.pathname === '/health') {
         response = Response.json({ status: 'ok', service: 'sierra-command-worker' });
-      } else if (url.pathname.startsWith('/kraken')) {
-        response = await handleKrakenRoute(request, url, env);
+      } else if (url.pathname.startsWith('/binance')) {
+        response = await handleBinanceRoute(request, url, env);
       } else if (url.pathname.startsWith('/oanda')) {
         response = await handleOandaRoute(request, url, env);
       } else {

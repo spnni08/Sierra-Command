@@ -12,5 +12,5 @@ ALLOWED_ORIGIN = "https://sierra-command.web.app"
 
 # Secrets (set via `wrangler secret put <NAME>`, never committed here):
 #   CREDENTIALS_ENCRYPTION_KEY  - base64 AES-256 key for encrypting api_credentials rows
-#   KRAKEN_API_KEY / KRAKEN_API_SECRET - Kraken demo account credentials
+#   BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET - Binance Futures Testnet credentials
 #   OANDA_API_TOKEN / OANDA_ACCOUNT_ID - OANDA practice account credentials
