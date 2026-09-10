@@ -1,0 +1,29 @@
+html, body { margin: 0; padding: 0; background: #0a0a0b; }
+* { box-sizing: border-box; }
+a { color: #e0243d; text-decoration: none; }
+a:hover { color: #ff4a60; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #33333a; }
+::-webkit-scrollbar-track { background: transparent; }
+
+:root {
+  --bg:#0a0a0b; --panel:#101012; --panel2:#17171a; --panel3:#1d1d21;
+  --line:#26262b; --line2:#33333a;
+  --txt:#d7d7db; --txt2:#8b8b94; --txt3:#5b5b64;
+  --acc:#e0243d; --acc2:#93131f; --accsoft:#2a1015;
+  --chart:#0c0c0e; --grid:#1a1a1e;
+  --up:#a2a2ab; --down:#0d0d10; --downedge:#71717b; --wick:#6c6c75;
+}
+[data-theme="light"] {
+  --bg:#e9ebee; --panel:#ffffff; --panel2:#f4f5f7; --panel3:#e9ebef;
+  --line:#d2d6dc; --line2:#bdc3cb;
+  --txt:#12151a; --txt2:#59616e; --txt3:#8a929e;
+  --acc:#1450c4; --acc2:#0c3894; --accsoft:#dbe6fb;
+  --chart:#ffffff; --grid:#e9ecf0;
+  --up:#9aa0a8; --down:#14171c; --downedge:#14171c; --wick:#767c85;
+}
+
+#root { height: 100vh; }
+
+button { font: inherit; }
+input { font: inherit; }
