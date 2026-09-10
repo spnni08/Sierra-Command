@@ -13,7 +13,7 @@
 // look real but aren't derived from anything — worse than not running them.
 // So only `crypto_baseline` has a real adapter for now; engine.js reports
 // "no_indicator_adapter" for any other strategy rather than pretending.
-import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin } from './indicators.js';
+import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
   const closes = candles.map((c) => c.close);
@@ -158,6 +158,79 @@ function buildCryptoOrderflowBreakout(candles) {
   };
 }
 
+// crypto_ichimoku_breakout — all four factors derivable from close+volume,
+// using the strategy's own ichimokuPeriods params (tenkan:5, kijun:13,
+// senkou_b:26, chikou_shift:13, adx_period:14). Classic Ichimoku's Tenkan/
+// Kijun/Senkou-B lines use (period-high + period-low)/2 from real intrabar
+// high/low; with this project's synthesized flat OHLC (high=low=close, see
+// candles.js) that collapses to (rollingMax(closes)+rollingMin(closes))/2,
+// which for a close-only series is the standard, correct way to compute it
+// (not a fabricated substitute — there IS no other high/low to use). Senkou
+// spans are displaced forward by the kijun period (13, the classic
+// proportional-Ichimoku convention when not using the traditional 9/26/52
+// periods), matching how the cloud would actually be plotted against the
+// current bar. Chikou reference is literally "close N bars ago" per this
+// strategy's own comment, directly computable. avg_volume uses the same
+// 20-bar rolling window as crypto_orderflow_breakout's adapter (no window
+// size specified in this strategy's params, so the same convention is
+// reused rather than inventing a different one).
+function buildCryptoIchimokuBreakout(candles) {
+  const { tenkan, kijun, senkou_b: senkouBPeriod, chikou_shift: chikouShift, adx_period: adxPeriod } = {
+    tenkan: 5,
+    kijun: 13,
+    senkou_b: 26,
+    chikou_shift: 13,
+    adx_period: 14,
+  };
+  const closes = candles.map((c) => c.close);
+  const volumes = candles.map((c) => c.volume);
+
+  const midpoint = (period) => {
+    const hi = rollingMax(closes, period);
+    const lo = rollingMin(closes, period);
+    return closes.map((_, i) => (Number.isFinite(hi[i]) && Number.isFinite(lo[i]) ? (hi[i] + lo[i]) / 2 : NaN));
+  };
+  const tenkanSen = midpoint(tenkan);
+  const kijunSen = midpoint(kijun);
+  const senkouARaw = closes.map((_, i) =>
+    Number.isFinite(tenkanSen[i]) && Number.isFinite(kijunSen[i]) ? (tenkanSen[i] + kijunSen[i]) / 2 : NaN
+  );
+  const senkouBRaw = midpoint(senkouBPeriod);
+  const displacement = kijun;
+
+  const adxSeries = computeAdx(candles, adxPeriod);
+  const avgVolume = sma(volumes, 20);
+
+  return function signalAt(i, direction) {
+    const srcIdx = i - displacement;
+    const chikouIdx = i - chikouShift;
+    if (srcIdx < 0 || chikouIdx < 0) return null;
+    const senkouA = senkouARaw[srcIdx];
+    const senkouB = senkouBRaw[srcIdx];
+    const adxVal = adxSeries[i];
+    const avgVol = avgVolume[i - 1];
+    if (
+      !Number.isFinite(senkouA) ||
+      !Number.isFinite(senkouB) ||
+      !Number.isFinite(adxVal) ||
+      !Number.isFinite(avgVol) ||
+      !Number.isFinite(volumes[i])
+    )
+      return null;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      senkou_a: senkouA,
+      senkou_b: senkouB,
+      adx: adxVal,
+      chikou_ref: closes[chikouIdx],
+      candle_volume: volumes[i],
+      avg_volume: avgVol,
+    };
+  };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
@@ -167,6 +240,8 @@ export const ADAPTERS = {
   crypto_sr_bollinger_sl: buildCryptoSrBollinger,
   crypto_orderflow_breakout: buildCryptoOrderflowBreakout,
   crypto_orderflow_breakout_sl: buildCryptoOrderflowBreakout,
+  crypto_ichimoku_breakout: buildCryptoIchimokuBreakout,
+  crypto_ichimoku_breakout_sl: buildCryptoIchimokuBreakout,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
