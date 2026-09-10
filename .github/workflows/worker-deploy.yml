@@ -55,13 +55,20 @@ jobs:
           if [ $TRADES_PROBE -ne 0 ]; then
             echo "trades.exit_mode missing — rebuilding trades with the new column and the widened source CHECK (SQLite can't ALTER a CHECK constraint in place)."
             # activity_log.related_trade_id REFERENCES trades(id): dropping
-            # trades while that FK is enforced fails even though the
-            # rebuilt table gets the exact same row ids back a moment
-            # later. Disable FK enforcement for just this rebuild (SQLite's
-            # own documented pattern for restructuring a referenced table),
-            # then turn it back on.
+            # trades while that FK is enforced fails even though the rebuilt
+            # table gets the exact same row ids back a moment later.
+            # `PRAGMA foreign_keys = OFF` does NOT work here — D1's remote
+            # HTTP API does not honor it (confirmed: the DROP TABLE still
+            # failed with the same FOREIGN KEY constraint error even with
+            # that pragma set first). Instead: park the referencing values
+            # in a backup table, null them out so nothing points at
+            # `trades`, do the rebuild, then restore them from the backup —
+            # the FK is never violated because nothing references trades
+            # while it's dropped.
             npx wrangler d1 execute sierra-command-db --remote --command "
-              PRAGMA foreign_keys = OFF;
+              CREATE TABLE IF NOT EXISTS activity_log_trade_fk_backup AS
+                SELECT id, related_trade_id FROM activity_log WHERE related_trade_id IS NOT NULL;
+              UPDATE activity_log SET related_trade_id = NULL WHERE related_trade_id IS NOT NULL;
               CREATE TABLE IF NOT EXISTS trades_migrated (
                 id TEXT PRIMARY KEY,
                 signal_id TEXT REFERENCES signals(id),
@@ -87,7 +94,10 @@ jobs:
               CREATE INDEX IF NOT EXISTS idx_trades_source ON trades(source);
               CREATE INDEX IF NOT EXISTS idx_trades_signal_id ON trades(signal_id);
               CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades(opened_at);
-              PRAGMA foreign_keys = ON;
+              UPDATE activity_log SET related_trade_id = (
+                SELECT related_trade_id FROM activity_log_trade_fk_backup WHERE activity_log_trade_fk_backup.id = activity_log.id
+              ) WHERE id IN (SELECT id FROM activity_log_trade_fk_backup);
+              DROP TABLE activity_log_trade_fk_backup;
             "
           else
             echo "trades.exit_mode already present — skipping."
