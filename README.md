@@ -30,14 +30,20 @@ Internal symbol codes are mapped to TradingView tickers in
 | ETH | `BINANCE:ETHUSDT` |
 | SOL | `BINANCE:SOLUSDT` |
 | EURUSD | `FX:EURUSD` |
-| S&P 500 | `OANDA:SPX500USD` |
-| NASDAQ | `OANDA:NAS100USD` |
+| S&P 500 | `FOREXCOM:SPXUSD` |
+| NASDAQ | `FOREXCOM:NSXUSD` |
 
-The S&P 500/NASDAQ symbols were originally `SP:SPX`/`NASDAQ:NDX` (the raw
-index feeds), which turned out not to resolve on the free embed widget in
-practice — it silently fell back to the widget's default demo symbol (Apple
-Inc) instead of erroring, so both tiles showed AAPL. Switched to TradingView's
-standard OANDA CFD-tracked index feeds, which resolve correctly.
+The S&P 500/NASDAQ symbols went through two prior fixes before landing here:
+1. `SP:SPX`/`NASDAQ:NDX` (the raw index feeds) didn't resolve on the free
+   embed widget at all — it silently fell back to the widget's default demo
+   symbol (Apple Inc) instead of erroring, so both tiles showed AAPL.
+2. `OANDA:SPX500USD`/`OANDA:NAS100USD` resolved but are login/paid-gated on
+   the free embed, showing "This symbol is only available at TradingView"
+   instead of a chart.
+
+`FOREXCOM:SPXUSD`/`FOREXCOM:NSXUSD` (FOREX.com's CFD tracking of these
+indices) are used in TradingView's own free-widget examples and don't
+require login.
 
 **Color-scheme note:** the app's own `CandlestickChart.jsx` (still used for
 the equity-curve line charts on Pro-Terminal and Dashboard) deliberately
