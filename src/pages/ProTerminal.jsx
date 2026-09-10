@@ -1,6 +1,19 @@
+import { useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import CandlestickChart from '../components/CandlestickChart';
 import { openTradesData, STRATEGY_SUGGESTIONS, SIGNAL_FACTORS } from '../data/mockData';
+import { fetchBacktestRuns } from '../api/client';
+import { useFetch } from '../api/useFetch';
+import StatusPanel from '../api/StatusPanel';
+
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v * 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+}
+function fmtNum(v, dec = 2) {
+  if (v === null || v === undefined) return '—';
+  return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
 
 const TF = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
 
@@ -26,6 +39,10 @@ function metricBox(label, val, accent) {
 export default function ProTerminal() {
   const { dense } = useApp();
   const trades = openTradesData();
+
+  const loadBacktests = useCallback(() => fetchBacktestRuns(), []);
+  const backtestQ = useFetch(loadBacktests, [loadBacktests]);
+  const latestBacktest = (backtestQ.data && backtestQ.data[0]) || null;
 
   return (
     <div style={{ height: '100%', display: 'grid', gridTemplateColumns: dense ? '1fr 340px' : '1fr 300px', gap: 1, background: 'var(--line)', minHeight: 0 }}>
@@ -89,23 +106,24 @@ export default function ProTerminal() {
 
       <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
         <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Backtest · MOMENTUM-M7 · 24 Monate</div>
+        <StatusPanel loading={backtestQ.loading} error={backtestQ.error} onRetry={backtestQ.reload} />
+        {!backtestQ.loading && !backtestQ.error && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--line)', borderBottom: '1px solid var(--line)' }}>
-          {metricBox('NETTOGEWINN', '+18.427 €')}
-          {metricBox('PROFIT-FAKTOR', '1,74')}
-          {metricBox('MAX. DRAWDOWN', '−9,4%', true)}
-          {metricBox('TREFFERQUOTE', '57,2%')}
+          {metricBox('PROFIT-FAKTOR', fmtNum(latestBacktest?.profit_factor))}
+          {metricBox('MAX. DRAWDOWN', latestBacktest ? '−' + fmtPct(Math.abs(latestBacktest.max_drawdown)) : '—', true)}
+          {metricBox('SHARPE', fmtNum(latestBacktest?.sharpe))}
+          {metricBox('SORTINO', fmtNum(latestBacktest?.sortino))}
         </div>
+        )}
 
-        {dense && (
+        {dense && !backtestQ.loading && !backtestQ.error && (
           <>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, borderBottom: '1px solid var(--line)' }}>
               {[
-                ['Trades gesamt', '1.284'],
-                ['Ø Haltedauer', '4,2 h'],
-                ['Sharpe / Sortino', '1,38 / 2,04'],
-                ['Ø CRV', '1 : 2,71'],
-                ['Längste Verlustserie', '7'],
-                ['Out-of-Sample-Abweichung', '−11,2%'],
+                ['Symbol', latestBacktest?.symbol ?? '—'],
+                ['Zeitraum', latestBacktest ? `${latestBacktest.timeframe_start} – ${latestBacktest.timeframe_end}` : '—'],
+                ['Sharpe / Sortino', `${fmtNum(latestBacktest?.sharpe)} / ${fmtNum(latestBacktest?.sortino)}`],
+                ['Out-of-Sample-Abweichung', latestBacktest ? fmtPct(latestBacktest.out_of_sample_deviation) : '—'],
               ].map(([l, v], i, arr) => (
                 <div key={l} style={{ display: 'flex', padding: '4px 9px', borderBottom: i < arr.length - 1 ? '1px solid var(--line)' : 'none' }}>
                   <div style={{ flex: 1, color: 'var(--txt2)' }}>{l}</div><div>{v}</div>

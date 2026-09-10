@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { openTradesData, activityLogData, calendarData } from '../data/mockData';
+import { calendarData } from '../data/mockData';
+import { fetchTrades, fetchActivityLog } from '../api/client';
+import { useFetch } from '../api/useFetch';
+import StatusPanel from '../api/StatusPanel';
 
 function segBtn(active, first) {
   return {
@@ -18,26 +21,87 @@ function fmtSigned(v) {
   return (v >= 0 ? '+' : '−') + s + ' €';
 }
 
+function fmtNum(v, dec = 2) {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function fmtDuration(openedAt, closedAt) {
+  const start = new Date(openedAt.replace(' ', 'T') + 'Z');
+  const end = closedAt ? new Date(closedAt.replace(' ', 'T') + 'Z') : new Date();
+  const hrs = Math.max(0, (end - start) / 3_600_000);
+  return hrs.toFixed(2).replace('.', ',') + ' h';
+}
+
+// Backend `source` values (binance_*/oanda_*) collapse onto the same
+// exchange/mt5 grouping the UI's filter buttons already use.
+function sourceGroup(source) {
+  if (!source) return 'exchange';
+  return source.startsWith('oanda') ? 'mt5' : 'exchange';
+}
+
+function toRowTrade(t) {
+  return {
+    symbol: t.symbol,
+    dir: t.direction === 'long' ? 'LONG' : 'SHORT',
+    vol: fmtNum(t.volume, 2),
+    entry: fmtNum(t.entry, t.entry < 50 ? 5 : 2),
+    sl: fmtNum(t.sl, 2),
+    tp: fmtNum(t.tp, 2),
+    strategy: '—',
+    factor: '—',
+    duration: fmtDuration(t.opened_at, t.closed_at),
+    pnl: t.pnl === null || t.pnl === undefined ? '—' : (t.pnl >= 0 ? '+' : '−') + fmtNum(Math.abs(t.pnl), 2),
+    source: sourceGroup(t.source),
+  };
+}
+
+function toRowActivity(a) {
+  const closed = /geschlossen/.test(a.message);
+  const opened = /eröffnet|eroeffnet/.test(a.message);
+  const timePart = (a.timestamp || '').split(' ')[1] || a.timestamp;
+  const srcLabel = { binance: 'BINANCE', oanda: 'MT5', system: 'SYSTEM' }[a.source] || a.source?.toUpperCase();
+  return {
+    time: timePart,
+    src: srcLabel,
+    mark: closed ? '✕' : opened ? '▸' : '·',
+    text: a.message,
+    source: a.source === 'system' ? 'system' : sourceGroup(a.source === 'oanda' ? 'oanda_demo' : 'binance_testnet'),
+    closed,
+  };
+}
+
 export default function LogPage() {
   const { dense } = useApp();
   const [logStatus, setLogStatus] = useState('all');
   const [logSrc, setLogSrc] = useState('all');
   const [selectedDay, setSelectedDay] = useState(9);
 
-  const openTrades = useMemo(() => openTradesData().filter(t => {
-    if (logStatus === 'closed') return false;
-    if (logSrc === 'mt5' && t.source !== 'mt5') return false;
-    if (logSrc === 'exchange' && t.source !== 'exchange') return false;
-    return true;
-  }), [logStatus, logSrc]);
+  const loadTrades = useCallback(() => fetchTrades('open'), []);
+  const loadActivity = useCallback(() => fetchActivityLog(), []);
+  const tradesQ = useFetch(loadTrades, [loadTrades]);
+  const activityQ = useFetch(loadActivity, [loadActivity]);
 
-  const activityLog = useMemo(() => activityLogData().filter(a => {
-    if (logStatus === 'open' && a.closed) return false;
-    if (logStatus === 'closed' && !a.closed) return false;
-    if (logSrc === 'mt5' && a.source !== 'mt5') return false;
-    if (logSrc === 'exchange' && a.source !== 'exchange') return false;
-    return true;
-  }), [logStatus, logSrc]);
+  const openTrades = useMemo(() => {
+    const rows = (tradesQ.data || []).map(toRowTrade);
+    return rows.filter(t => {
+      if (logStatus === 'closed') return false;
+      if (logSrc === 'mt5' && t.source !== 'mt5') return false;
+      if (logSrc === 'exchange' && t.source !== 'exchange') return false;
+      return true;
+    });
+  }, [tradesQ.data, logStatus, logSrc]);
+
+  const activityLog = useMemo(() => {
+    const rows = (activityQ.data || []).map(toRowActivity);
+    return rows.filter(a => {
+      if (logStatus === 'open' && a.closed) return false;
+      if (logStatus === 'closed' && !a.closed) return false;
+      if (logSrc === 'mt5' && a.source !== 'mt5') return false;
+      if (logSrc === 'exchange' && a.source !== 'exchange') return false;
+      return true;
+    });
+  }, [activityQ.data, logStatus, logSrc]);
 
   const calRaw = useMemo(() => calendarData(), []);
   const selDay = calRaw.find(c => c && c.day === selectedDay && c.hasData);
@@ -67,35 +131,41 @@ export default function LogPage() {
         <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', gap: 1, background: 'var(--line)', minHeight: 0 }}>
           <div style={{ background: 'var(--panel)' }}>
             <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Offene Trades · vollständig</div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflowX: 'auto' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '4px 10px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
-                <div>SYMBOL</div><div>RICHT.</div><div style={{ textAlign: 'right' }}>VOL.</div><div style={{ textAlign: 'right' }}>EINSTIEG</div><div style={{ textAlign: 'right' }}>SL</div><div style={{ textAlign: 'right' }}>TP</div><div>STRATEGIE</div><div style={{ textAlign: 'right' }}>FAKTOR</div><div style={{ textAlign: 'right' }}>LAUFZEIT</div><div style={{ textAlign: 'right' }}>P/L</div>
-              </div>
-              {openTrades.map((t, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
-                  <div style={{ color: 'var(--txt)' }}>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
-                  <div style={{ textAlign: 'right' }}>{t.vol}</div><div style={{ textAlign: 'right' }}>{t.entry}</div>
-                  <div style={{ textAlign: 'right' }}>{t.sl}</div><div style={{ textAlign: 'right' }}>{t.tp}</div>
-                  <div style={{ color: 'var(--txt2)' }}>{t.strategy}</div>
-                  <div style={{ textAlign: 'right', color: 'var(--acc)' }}>{t.factor}</div>
-                  <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.duration}</div>
-                  <div style={{ textAlign: 'right' }}>{t.pnl}</div>
+            <StatusPanel loading={tradesQ.loading} error={tradesQ.error} onRetry={tradesQ.reload} />
+            {!tradesQ.loading && !tradesQ.error && (
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflowX: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '4px 10px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
+                  <div>SYMBOL</div><div>RICHT.</div><div style={{ textAlign: 'right' }}>VOL.</div><div style={{ textAlign: 'right' }}>EINSTIEG</div><div style={{ textAlign: 'right' }}>SL</div><div style={{ textAlign: 'right' }}>TP</div><div>STRATEGIE</div><div style={{ textAlign: 'right' }}>FAKTOR</div><div style={{ textAlign: 'right' }}>LAUFZEIT</div><div style={{ textAlign: 'right' }}>P/L</div>
                 </div>
-              ))}
-            </div>
+                {openTrades.map((t, i) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
+                    <div style={{ color: 'var(--txt)' }}>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
+                    <div style={{ textAlign: 'right' }}>{t.vol}</div><div style={{ textAlign: 'right' }}>{t.entry}</div>
+                    <div style={{ textAlign: 'right' }}>{t.sl}</div><div style={{ textAlign: 'right' }}>{t.tp}</div>
+                    <div style={{ color: 'var(--txt2)' }}>{t.strategy}</div>
+                    <div style={{ textAlign: 'right', color: 'var(--acc)' }}>{t.factor}</div>
+                    <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.duration}</div>
+                    <div style={{ textAlign: 'right' }}>{t.pnl}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Vollständige Aktivitäts-Historie</div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, lineHeight: 1.9, padding: '7px 10px', overflow: 'auto', flex: 1, minHeight: 0 }}>
-              {activityLog.map((a, i) => (
-                <div key={i} style={{ borderBottom: '1px solid var(--line)', padding: '3px 0', color: 'var(--txt2)' }}>
-                  <span style={{ color: 'var(--txt3)' }}>{a.time}</span>{' '}
-                  <span style={{ color: 'var(--txt3)', width: 52, display: 'inline-block' }}>{a.src}</span>{' '}
-                  <span style={{ color: a.mark === '·' ? 'var(--txt3)' : 'var(--acc)' }}>{a.mark}</span> {a.text}
-                </div>
-              ))}
-            </div>
+            <StatusPanel loading={activityQ.loading} error={activityQ.error} onRetry={activityQ.reload} />
+            {!activityQ.loading && !activityQ.error && (
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, lineHeight: 1.9, padding: '7px 10px', overflow: 'auto', flex: 1, minHeight: 0 }}>
+                {activityLog.map((a, i) => (
+                  <div key={i} style={{ borderBottom: '1px solid var(--line)', padding: '3px 0', color: 'var(--txt2)' }}>
+                    <span style={{ color: 'var(--txt3)' }}>{a.time}</span>{' '}
+                    <span style={{ color: 'var(--txt3)', width: 52, display: 'inline-block' }}>{a.src}</span>{' '}
+                    <span style={{ color: a.mark === '·' ? 'var(--txt3)' : 'var(--acc)' }}>{a.mark}</span> {a.text}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

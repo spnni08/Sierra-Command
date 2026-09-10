@@ -1,7 +1,37 @@
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import CandlestickChart from '../components/CandlestickChart';
-import { RECENT_CLOSED_TRADES } from '../data/mockData';
+import { fetchTrades } from '../api/client';
+import { useFetch } from '../api/useFetch';
+import StatusPanel from '../api/StatusPanel';
+
+function fmtClosedTime(ts) {
+  if (!ts) return '—';
+  const [date, time] = ts.split(' ');
+  const [, m, d] = date.split('-');
+  return `${d}.${m}. ${time?.slice(0, 5) ?? ''}`;
+}
+
+function fmtHours(openedAt, closedAt) {
+  const start = new Date(openedAt.replace(' ', 'T') + 'Z');
+  const end = new Date(closedAt.replace(' ', 'T') + 'Z');
+  const hrs = Math.max(0, (end - start) / 3_600_000);
+  return hrs.toFixed(1).replace('.', ',') + ' h';
+}
+
+function toClosedRow(t) {
+  const neg = (t.pnl ?? 0) < 0;
+  const pnlAbs = Math.abs(t.pnl ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return {
+    time: fmtClosedTime(t.closed_at),
+    symbol: t.symbol,
+    dir: t.direction === 'long' ? 'LONG' : 'SHORT',
+    strategy: '—',
+    duration: fmtHours(t.opened_at, t.closed_at || t.opened_at),
+    pnl: (neg ? '−' : '+') + pnlAbs + ' €',
+    neg,
+  };
+}
 
 function segBtn(active) {
   return {
@@ -16,6 +46,13 @@ export default function Dashboard({ goAutoSettings, goLog }) {
   const { dense } = useApp();
   const [dashMode, setDashMode] = useState('live');
   const isBacktest = dashMode === 'backtest';
+
+  const loadClosedTrades = useCallback(() => fetchTrades('closed'), []);
+  const closedQ = useFetch(loadClosedTrades, [loadClosedTrades]);
+  const recentClosedTrades = useMemo(
+    () => (closedQ.data || []).slice(0, 5).map(toClosedRow),
+    [closedQ.data]
+  );
 
   const kpis = isBacktest
     ? [
@@ -122,18 +159,21 @@ export default function Dashboard({ goAutoSettings, goLog }) {
       {dense && (
         <div style={{ background: 'var(--panel)' }}>
           <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Letzte Abschlüsse</div>
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '110px 90px 70px 1fr 90px 90px', padding: '4px 12px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 560 }}>
-              <div>ZEIT</div><div>SYMBOL</div><div>RICHTUNG</div><div>STRATEGIE</div><div style={{ textAlign: 'right' }}>DAUER</div><div style={{ textAlign: 'right' }}>ERGEBNIS</div>
-            </div>
-            {RECENT_CLOSED_TRADES.map((t, i, arr) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: '110px 90px 70px 1fr 90px 90px', padding: '5px 12px', borderBottom: i < arr.length - 1 ? '1px solid var(--line)' : 'none', minWidth: 560 }}>
-                <div style={{ color: 'var(--txt2)' }}>{t.time}</div><div>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
-                <div style={{ color: 'var(--txt2)' }}>{t.strategy}</div><div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.duration}</div>
-                <div style={{ textAlign: 'right', color: t.neg ? 'var(--acc)' : 'var(--txt)' }}>{t.pnl}</div>
+          <StatusPanel loading={closedQ.loading} error={closedQ.error} onRetry={closedQ.reload} />
+          {!closedQ.loading && !closedQ.error && (
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflowX: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 90px 70px 1fr 90px 90px', padding: '4px 12px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 560 }}>
+                <div>ZEIT</div><div>SYMBOL</div><div>RICHTUNG</div><div>STRATEGIE</div><div style={{ textAlign: 'right' }}>DAUER</div><div style={{ textAlign: 'right' }}>ERGEBNIS</div>
               </div>
-            ))}
-          </div>
+              {recentClosedTrades.map((t, i, arr) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '110px 90px 70px 1fr 90px 90px', padding: '5px 12px', borderBottom: i < arr.length - 1 ? '1px solid var(--line)' : 'none', minWidth: 560 }}>
+                  <div style={{ color: 'var(--txt2)' }}>{t.time}</div><div>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
+                  <div style={{ color: 'var(--txt2)' }}>{t.strategy}</div><div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.duration}</div>
+                  <div style={{ textAlign: 'right', color: t.neg ? 'var(--acc)' : 'var(--txt)' }}>{t.pnl}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
