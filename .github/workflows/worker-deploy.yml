@@ -34,16 +34,16 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BINANCE_TESTNET_API_KEY: ${{ secrets.BINANCE_TESTNET_API_KEY }}
           BINANCE_TESTNET_API_SECRET: ${{ secrets.BINANCE_TESTNET_API_SECRET }}
-      - name: Sync Alpha Vantage secret (skipped until repo secret exists)
+      - name: Sync Twelve Data secret (skipped until repo secret exists)
         run: |
-          if [ -n "$ALPHA_VANTAGE_API_KEY" ]; then
-            echo "$ALPHA_VANTAGE_API_KEY" | npx wrangler secret put ALPHA_VANTAGE_API_KEY
+          if [ -n "$TWELVE_DATA_API_KEY" ]; then
+            echo "$TWELVE_DATA_API_KEY" | npx wrangler secret put TWELVE_DATA_API_KEY
           else
-            echo "ALPHA_VANTAGE_API_KEY not set as a repo secret yet — skipping."
+            echo "TWELVE_DATA_API_KEY not set as a repo secret yet — skipping."
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
       - name: Deploy worker
         run: npx wrangler deploy
         env:
