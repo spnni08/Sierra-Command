@@ -9,15 +9,14 @@ import { useApp } from '../context/AppContext';
 //  - BTC/ETH/SOL: BINANCE:<X>USDT — Binance is TradingView's standard,
 //    always-available crypto data source for these pairs.
 //  - EURUSD: FX:EURUSD — TradingView's FX (ICE) consolidated feed.
-//  - S&P 500: OANDA:SPX500USD — SP:SPX and NASDAQ:NDX (the raw index feeds)
-//    turned out NOT to resolve on the free embed widget in practice: it
-//    silently fell back to the widget's default demo symbol (AAPL) instead
-//    of erroring, which is why both S&P 500 and NAS 100 tiles were showing
-//    "Apple Inc". OANDA:SPX500USD is TradingView's standard CFD-tracked S&P
-//    500 feed and is confirmed to resolve correctly on the free widget.
-//  - NASDAQ: OANDA:NAS100USD — same situation; this is TradingView's
-//    standard CFD-tracked Nasdaq-100 feed, confirmed working on the free
-//    widget.
+//  - S&P 500: FOREXCOM:SPXUSD — two prior symbols were tried and both
+//    failed in the free embed: SP:SPX / NASDAQ:NDX (raw index feeds) fell
+//    back to the widget's default demo symbol (AAPL); OANDA:SPX500USD then
+//    loaded but showed "This symbol is only available at TradingView"
+//    (a paid/login-gated symbol on the free embed, despite resolving).
+//    FOREXCOM:SPXUSD is a FOREX.com-provided CFD tracking the S&P 500,
+//    used in TradingView's own free-widget examples.
+//  - NASDAQ: FOREXCOM:NSXUSD — same reasoning, FOREX.com's Nasdaq-100 CFD.
 export const TV_SYMBOL_MAP = {
   BTC: 'BINANCE:BTCUSDT',
   BTCUSD: 'BINANCE:BTCUSDT',
@@ -26,10 +25,10 @@ export const TV_SYMBOL_MAP = {
   SOL: 'BINANCE:SOLUSDT',
   SOLUSD: 'BINANCE:SOLUSDT',
   EURUSD: 'FX:EURUSD',
-  'S&P500': 'OANDA:SPX500USD',
-  SPX500: 'OANDA:SPX500USD',
-  NASDAQ: 'OANDA:NAS100USD',
-  NAS100: 'OANDA:NAS100USD',
+  'S&P500': 'FOREXCOM:SPXUSD',
+  SPX500: 'FOREXCOM:SPXUSD',
+  NASDAQ: 'FOREXCOM:NSXUSD',
+  NAS100: 'FOREXCOM:NSXUSD',
 };
 
 // TradingView interval codes: 1, 5, 15, 30, 60, 240, D, W, M.
