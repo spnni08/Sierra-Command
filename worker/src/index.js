@@ -1,5 +1,6 @@
 import { handleBinanceRoute } from './routes/binance.js';
 import { handleOandaRoute } from './routes/oanda.js';
+import { handleAlphaVantageRoute } from './routes/alphavantage.js';
 import { withCors, handlePreflight } from './cors.js';
 
 export default {
@@ -18,6 +19,8 @@ export default {
         response = await handleBinanceRoute(request, url, env);
       } else if (url.pathname.startsWith('/oanda')) {
         response = await handleOandaRoute(request, url, env);
+      } else if (url.pathname.startsWith('/alphavantage')) {
+        response = await handleAlphaVantageRoute(request, url, env);
       } else {
         response = Response.json({ error: 'not_found' }, { status: 404 });
       }
