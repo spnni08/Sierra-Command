@@ -13,7 +13,7 @@
 // look real but aren't derived from anything — worse than not running them.
 // So only `crypto_baseline` has a real adapter for now; engine.js reports
 // "no_indicator_adapter" for any other strategy rather than pretending.
-import { ema, rsi, emaBollingerBands, bollingerBands } from './indicators.js';
+import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
   const closes = candles.map((c) => c.close);
@@ -114,6 +114,50 @@ function buildCryptoSrBollinger(candles) {
   };
 }
 
+// crypto_orderflow_breakout — fully close/volume derivable: range_high/
+// range_low use rollingMax/rollingMin of closes over the PRIOR N=20 bars
+// (not including the current one, matching Pine's ta.highest/lowest[1]
+// convention — including the current bar would make "close > range_high"
+// tautologically false). avg_volume is a rolling SMA of volume over the
+// same prior-N window, using the real CoinGecko total_volumes data (see
+// candles.js) — a genuine daily aggregate volume, not fabricated, though
+// coarser than the single-exchange candle volume the original Pine reads.
+function buildCryptoOrderflowBreakout(candles) {
+  const closes = candles.map((c) => c.close);
+  const volumes = candles.map((c) => c.volume);
+  const rangeHigh = rollingMax(closes, 20);
+  const rangeLow = rollingMin(closes, 20);
+  const avgVolume = sma(volumes, 20);
+  const ema200 = ema(closes, 200);
+  const rsi9 = rsi(closes, 9);
+
+  return function signalAt(i, direction) {
+    if (i < 1) return null;
+    const high = rangeHigh[i - 1];
+    const low = rangeLow[i - 1];
+    const avgVol = avgVolume[i - 1];
+    if (
+      !Number.isFinite(high) ||
+      !Number.isFinite(low) ||
+      !Number.isFinite(avgVol) ||
+      !Number.isFinite(ema200[i]) ||
+      !Number.isFinite(volumes[i])
+    )
+      return null;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      range_high: high,
+      range_low: low,
+      candle_volume: volumes[i],
+      avg_volume: avgVol,
+      ema200: ema200[i],
+      rsi9: rsi9[i],
+    };
+  };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
@@ -121,6 +165,8 @@ export const ADAPTERS = {
   crypto_bb_rsi_trendfilter_sl: buildCryptoBbRsiTrendfilter,
   crypto_sr_bollinger: buildCryptoSrBollinger,
   crypto_sr_bollinger_sl: buildCryptoSrBollinger,
+  crypto_orderflow_breakout: buildCryptoOrderflowBreakout,
+  crypto_orderflow_breakout_sl: buildCryptoOrderflowBreakout,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
