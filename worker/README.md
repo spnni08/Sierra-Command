@@ -38,7 +38,10 @@ the `CLOUDFLARE_API_TOKEN` repository secret — no interactive
 Secrets (`CREDENTIALS_ENCRYPTION_KEY`, `BINANCE_TESTNET_API_KEY`/`SECRET`,
 `OANDA_API_TOKEN`/`OANDA_ACCOUNT_ID`, `ALPHA_VANTAGE_API_KEY`) are managed
 as GitHub Actions repo secrets and synced into the Worker by that same
-workflow — see `wrangler.toml` for the full list.
+workflow — see `wrangler.toml` for the full list. `schema.sql`'s
+`api_credentials.provider` column tracks the same three providers
+(`binance`/`oanda`/`alphavantage`) for credentials stored in D1, separate
+from these Worker-level secrets.
 
 ## Known limitation: Binance Futures Testnet blocks this Worker entirely
 
