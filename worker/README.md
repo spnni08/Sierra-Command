@@ -33,3 +33,20 @@ Secrets (`CREDENTIALS_ENCRYPTION_KEY`, `BINANCE_TESTNET_API_KEY`/`SECRET`,
 `OANDA_API_TOKEN`/`OANDA_ACCOUNT_ID`) are managed as GitHub Actions repo
 secrets and synced into the Worker by that same workflow — see
 `wrangler.toml` for the full list.
+
+## Known limitation: Binance Futures Testnet blocks this Worker
+
+`/binance/candles` and `/binance/account-status` are deployed and correct
+(confirmed: schema migrated, secrets synced, deploy green), but every
+request — signed and unsigned alike — gets a `403` from Binance Testnet's
+CloudFront WAF before it reaches Binance's own API logic. This isn't a
+credentials or signing bug; it's Binance's edge blocking Cloudflare
+Workers' outbound IP ranges as generic cloud/datacenter traffic. Confirmed
+this isn't an IP allowlist setting on the API key itself (checked in the
+Binance dashboard — no restriction configured there).
+
+Deliberately not working around this (e.g. proxying through non-Cloudflare
+egress) — that would mean actively evading Binance's bot/abuse protection,
+which we're not going to do. Revisit once the *live* Binance integration is
+being built: live endpoints may not have the same WAF behavior as testnet,
+so re-check there before assuming this still applies.
