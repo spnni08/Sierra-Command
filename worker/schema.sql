@@ -39,7 +39,10 @@ CREATE TABLE IF NOT EXISTS trades (
   sl REAL,
   tp REAL,
   volume REAL NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live')),
+  -- 'oanda_demo_simulated' = no real OANDA account (KYC was never completed);
+  -- fills are simulated against real Alpha Vantage prices — see
+  -- worker/src/simulation/execution-engine.js.
+  source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live','oanda_demo_simulated')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   pnl REAL,
   -- Mirrors signals.exit_mode at the time this trade was opened: 'fixed'
