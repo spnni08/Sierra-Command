@@ -45,10 +45,25 @@ async function fetchCryptoCandles(symbol, startDate, endDate, env) {
   const raw = await res.json();
   if (!Array.isArray(raw?.prices)) throw new Error('coingecko_bad_response');
 
+  // /market_chart also returns total_volumes (real, CoinGecko-aggregated
+  // 24h volume across exchanges) alongside prices — not the same thing as a
+  // single exchange's candle-level volume the original Pine strategies read,
+  // but genuine, non-fabricated volume data, so it's attached here. Matched
+  // to each price point by array index (both arrays are the same length,
+  // same daily cadence, from the same response).
+  const volumes = Array.isArray(raw.total_volumes) ? raw.total_volumes : [];
+
   const startMs = startDate.getTime();
   const endMs = endDate.getTime();
   return raw.prices
-    .map(([timestamp, price]) => ({ timestamp, open: price, high: price, low: price, close: price }))
+    .map(([timestamp, price], i) => ({
+      timestamp,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      volume: volumes[i]?.[1] ?? NaN,
+    }))
     .filter((c) => c.timestamp >= startMs && c.timestamp <= endMs);
 }
 
