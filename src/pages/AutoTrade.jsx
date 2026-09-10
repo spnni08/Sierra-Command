@@ -1,5 +1,46 @@
-import { useState } from 'react';
-import { INITIAL_STRATEGIES, SESSIONS, NEWSLV } from '../data/mockData';
+import { useCallback, useEffect, useState } from 'react';
+import { SESSIONS, NEWSLV } from '../data/mockData';
+import { fetchStrategies, putStrategySettings } from '../api/client';
+import { useFetch } from '../api/useFetch';
+import StatusPanel from '../api/StatusPanel';
+
+function sessionIdxFromFilter(filter) {
+  if (!Array.isArray(filter) || filter.length === 0) return 0; // Alle Sessions
+  if (filter.length === 1) return 2; // Ohne Asien (heuristic: partial filter)
+  return 1; // Nur EU+US
+}
+
+function sessionFilterFromIdx(idx) {
+  if (idx === 0) return [];
+  if (idx === 1) return ['eu', 'us'];
+  return ['eu'];
+}
+
+function newsIdxFromThreshold(t) {
+  if (typeof t !== 'number') return 1;
+  if (t < 0.4) return 0;
+  if (t < 0.55) return 1;
+  return 2;
+}
+
+function newsThresholdFromIdx(idx) {
+  return [0.3, 0.5, 0.6][idx] ?? 0.5;
+}
+
+function toCardStrategy(row) {
+  const factorCount = Array.isArray(row.factor_definition?.factors) ? row.factor_definition.factors.length : 0;
+  return {
+    id: row.id,
+    name: row.name,
+    market: Array.isArray(row.asset_classes) ? row.asset_classes.join(', ') : '',
+    active: row.active,
+    risk: row.settings.risk_per_trade_pct ?? 1.0,
+    sessionIdx: sessionIdxFromFilter(row.settings.session_filter),
+    corr: row.settings.correlation_limit ?? 0.8,
+    newsIdx: newsIdxFromThreshold(row.settings.news_filter_threshold),
+    factors: factorCount ? `${factorCount}/7` : '—',
+  };
+}
 
 function StrategyCard({ st, onToggle, onRisk, onSession, onCorr, onNews }) {
   return (
@@ -13,7 +54,7 @@ function StrategyCard({ st, onToggle, onRisk, onSession, onCorr, onNews }) {
         <div style={{ fontWeight: 700, fontSize: 12, letterSpacing: '0.03em' }}>{st.name}</div>
         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt3)' }}>{st.market}</div>
         <div style={{ flex: 1 }} />
-        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt2)' }}>Faktor {st.factors} · Treff. {st.winrate}%</div>
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt2)' }}>Faktor {st.factors}</div>
       </div>
 
       <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -45,16 +86,36 @@ function StrategyCard({ st, onToggle, onRisk, onSession, onCorr, onNews }) {
 
 export default function AutoTrade() {
   const [auto, setAuto] = useState(true);
-  const [strategies, setStrategies] = useState(INITIAL_STRATEGIES);
+  const [strategies, setStrategies] = useState([]);
+
+  const loadStrategies = useCallback(() => fetchStrategies(), []);
+  const { data, loading, error, reload } = useFetch(loadStrategies, [loadStrategies]);
+
+  useEffect(() => {
+    if (data) setStrategies(data.map(toCardStrategy));
+  }, [data]);
 
   const activeCount = strategies.filter(s => s.active).length;
   const autoLabel = auto ? `AKTIV · ${activeCount} Strategien` : 'PAUSIERT';
 
-  const update = (i, patch) => setStrategies(prev => {
-    const arr = prev.slice();
-    arr[i] = { ...arr[i], ...patch };
-    return arr;
-  });
+  const update = (i, patch) => {
+    setStrategies(prev => {
+      const arr = prev.slice();
+      const next = { ...arr[i], ...patch };
+      arr[i] = next;
+
+      // Best-effort write-through to the backend; UI stays optimistic even
+      // if the PUT fails (surfaced only via console, not blocking the page).
+      putStrategySettings(next.id, {
+        risk_per_trade_pct: next.risk,
+        session_filter: sessionFilterFromIdx(next.sessionIdx),
+        correlation_limit: next.corr,
+        news_filter_threshold: newsThresholdFromIdx(next.newsIdx),
+      }).catch(err => console.error('Failed to save strategy settings', err));
+
+      return arr;
+    });
+  };
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -80,19 +141,23 @@ export default function AutoTrade() {
 
       <div style={{ padding: '6px 16px', background: 'var(--panel)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>Pro Strategie</div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 1, background: 'var(--line)' }}>
-        {strategies.map((st, i) => (
-          <StrategyCard
-            key={st.id}
-            st={st}
-            onToggle={() => update(i, { active: !st.active })}
-            onRisk={e => update(i, { risk: parseFloat(e.target.value) })}
-            onCorr={e => update(i, { corr: parseFloat(e.target.value) })}
-            onSession={() => update(i, { sessionIdx: (st.sessionIdx + 1) % SESSIONS.length })}
-            onNews={() => update(i, { newsIdx: (st.newsIdx + 1) % NEWSLV.length })}
-          />
-        ))}
-      </div>
+      <StatusPanel loading={loading} error={error} onRetry={reload} />
+
+      {!loading && !error && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 1, background: 'var(--line)' }}>
+          {strategies.map((st, i) => (
+            <StrategyCard
+              key={st.id}
+              st={st}
+              onToggle={() => update(i, { active: !st.active })}
+              onRisk={e => update(i, { risk: parseFloat(e.target.value) })}
+              onCorr={e => update(i, { corr: parseFloat(e.target.value) })}
+              onSession={() => update(i, { sessionIdx: (st.sessionIdx + 1) % SESSIONS.length })}
+              onNews={() => update(i, { newsIdx: (st.newsIdx + 1) % NEWSLV.length })}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
