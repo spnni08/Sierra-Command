@@ -23,13 +23,28 @@ export function ema(closes, period) {
   return out;
 }
 
+// NaN-tolerant: only emits a value once `period` consecutive FINITE inputs
+// are in the window, rather than letting one leading NaN (e.g. feeding this
+// an indicator series like atr() that itself starts with NaN warmup values)
+// poison the running sum permanently.
 export function sma(closes, period) {
   const out = new Array(closes.length).fill(NaN);
   let sum = 0;
+  let count = 0;
   for (let i = 0; i < closes.length; i++) {
-    sum += closes[i];
-    if (i >= period) sum -= closes[i - period];
-    if (i >= period - 1) out[i] = sum / period;
+    const v = closes[i];
+    if (Number.isFinite(v)) {
+      sum += v;
+      count++;
+    }
+    if (i >= period) {
+      const old = closes[i - period];
+      if (Number.isFinite(old)) {
+        sum -= old;
+        count--;
+      }
+    }
+    if (i >= period - 1 && count === period) out[i] = sum / period;
   }
   return out;
 }

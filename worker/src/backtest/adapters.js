@@ -13,7 +13,7 @@
 // look real but aren't derived from anything — worse than not running them.
 // So only `crypto_baseline` has a real adapter for now; engine.js reports
 // "no_indicator_adapter" for any other strategy rather than pretending.
-import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx } from './indicators.js';
+import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
   const closes = candles.map((c) => c.close);
@@ -231,6 +231,122 @@ function buildCryptoIchimokuBreakout(candles) {
   };
 }
 
+// Confirmed pivot high/low on a plain value series, ta.pivothigh/pivotlow
+// style: a bar is a pivot if it's the strict extreme within [i-left, i+right]
+// — only knowable once `right` bars later (matches Pine's own causality, not
+// an extra simplification). Returns a forward-filled series (the pivot value
+// persists as the active support/resistance level until a newer pivot
+// supersedes it), matching the "var float resistance/support" carry-forward
+// in the Pine source.
+function pivotLevels(values, left, right, mode) {
+  const n = values.length;
+  const confirmedAt = new Array(n).fill(NaN);
+  for (let i = left; i < n - right; i++) {
+    let isPivot = true;
+    for (let j = i - left; j <= i + right; j++) {
+      if (j === i) continue;
+      if (mode === 'high' ? values[j] >= values[i] : values[j] <= values[i]) {
+        isPivot = false;
+        break;
+      }
+    }
+    if (isPivot) confirmedAt[i + right] = values[i];
+  }
+  const out = new Array(n).fill(NaN);
+  let last = NaN;
+  for (let i = 0; i < n; i++) {
+    if (Number.isFinite(confirmedAt[i])) last = confirmedAt[i];
+    out[i] = last;
+  }
+  return out;
+}
+
+// crypto_sr_volume needs true Volume Profile (VAL/VAH/POC from intrabar
+// volume-at-price) — CoinGecko's daily aggregate volume has no
+// price-distribution to build that from, so it stays no_indicator_adapter
+// (see engine.js). crypto_sr_exclusion's S&R, by contrast, is explicitly
+// classic pivot-based (no volume profile — see this strategy's own header
+// comment and its Pine source), which IS derivable from a close series.
+// Params match the Pine source (tradingview-bot/pinescript/strategies/
+// crypto_sr_exclusion.pine) exactly: pivotLeft/Right=5, zoneTolPct=0.25,
+// atrLen=14, atrSpikeMult=1.8, volLen=20, thinVolMult=0.5. Pine's real
+// pivothigh/pivotlow use high/low; with this project's flat synthesized OHLC
+// (high=low=close) they collapse to pivots on the close series itself — the
+// correct computation given the data, not a fabricated substitute.
+//
+// cooldown_active is the one field with no Pine equivalent at all (Pine's
+// own comment: "rein Worker-seitig, DB-Blick auf `signals`" — a live DB
+// lookback of the last actual trade, not a chart indicator). Approximated
+// here as elapsed time since the precondition (zone-touch + RSI direction)
+// last edge-triggered for the same direction, using COOLDOWN_MINUTES=10
+// from the strategy's own params — on this backtest's daily candles that
+// window is far shorter than one bar, so in practice it reads "elapsed"
+// almost always, which is an honest consequence of the daily timeframe, not
+// a smoothed-over gap.
+function buildCryptoSrExclusion(candles) {
+  const closes = candles.map((c) => c.close);
+  const volumes = candles.map((c) => c.volume);
+  const timestamps = candles.map((c) => c.timestamp);
+  const PIVOT_LEFT = 5;
+  const PIVOT_RIGHT = 5;
+  const ZONE_TOL_PCT = 0.25;
+  const ATR_LEN = 14;
+  const ATR_SPIKE_MULT = 1.8;
+  const VOL_LEN = 20;
+  const THIN_VOL_MULT = 0.5;
+  const COOLDOWN_MS = 10 * 60_000;
+
+  const resistance = pivotLevels(closes, PIVOT_LEFT, PIVOT_RIGHT, 'high');
+  const support = pivotLevels(closes, PIVOT_LEFT, PIVOT_RIGHT, 'low');
+  const rsi14 = rsi(closes, 14);
+  const atrSeries = computeAtr(candles, ATR_LEN);
+  const atrAvg = sma(atrSeries, ATR_LEN);
+  const volAvg = sma(volumes, VOL_LEN);
+
+  const longSig = new Array(closes.length).fill(false);
+  const shortSig = new Array(closes.length).fill(false);
+  const lastFireTsLong = new Array(closes.length).fill(NaN);
+  const lastFireTsShort = new Array(closes.length).fill(NaN);
+  let lastLong = NaN;
+  let lastShort = NaN;
+  for (let i = 0; i < closes.length; i++) {
+    const zoneTol = closes[i] * (ZONE_TOL_PCT / 100);
+    const nearSupport = Number.isFinite(support[i]) && Math.abs(closes[i] - support[i]) <= zoneTol;
+    const nearResistance = Number.isFinite(resistance[i]) && Math.abs(closes[i] - resistance[i]) <= zoneTol;
+    const zoneTouchLong = nearSupport && closes[i] > support[i];
+    const zoneTouchShort = nearResistance && closes[i] < resistance[i];
+    const rsiOkLong = Number.isFinite(rsi14[i]) && rsi14[i] > 40;
+    const rsiOkShort = Number.isFinite(rsi14[i]) && rsi14[i] < 60;
+    longSig[i] = zoneTouchLong && rsiOkLong;
+    shortSig[i] = zoneTouchShort && rsiOkShort;
+    const longFire = longSig[i] && !(i > 0 && longSig[i - 1]);
+    const shortFire = shortSig[i] && !(i > 0 && shortSig[i - 1]);
+    if (longFire) lastLong = timestamps[i];
+    if (shortFire) lastShort = timestamps[i];
+    lastFireTsLong[i] = lastLong;
+    lastFireTsShort[i] = lastShort;
+  }
+
+  return function signalAt(i, direction) {
+    if (!Number.isFinite(rsi14[i]) || !Number.isFinite(atrAvg[i]) || !Number.isFinite(volAvg[i])) return null;
+    const trigger = direction === 'long' ? (longSig[i] ? 'SUPPORT_TOUCH' : 'NONE') : shortSig[i] ? 'RESISTANCE_TOUCH' : 'NONE';
+    const atrSpike = atrAvg[i] > 0 && atrSeries[i] > atrAvg[i] * ATR_SPIKE_MULT;
+    const thinVolume = volAvg[i] > 0 && Number.isFinite(volumes[i]) && volumes[i] < volAvg[i] * THIN_VOL_MULT;
+    const lastFireTs = direction === 'long' ? lastFireTsLong[i] : lastFireTsShort[i];
+    const cooldownActive = Number.isFinite(lastFireTs) && timestamps[i] - lastFireTs < COOLDOWN_MS;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      trigger,
+      rsi: rsi14[i],
+      atr_spike: atrSpike,
+      thin_volume: thinVolume,
+      cooldown_active: cooldownActive,
+    };
+  };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
@@ -242,6 +358,8 @@ export const ADAPTERS = {
   crypto_orderflow_breakout_sl: buildCryptoOrderflowBreakout,
   crypto_ichimoku_breakout: buildCryptoIchimokuBreakout,
   crypto_ichimoku_breakout_sl: buildCryptoIchimokuBreakout,
+  crypto_sr_exclusion: buildCryptoSrExclusion,
+  crypto_sr_exclusion_sl: buildCryptoSrExclusion,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
