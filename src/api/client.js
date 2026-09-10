@@ -32,11 +32,36 @@ export function fetchBacktestRuns(strategyId) {
   return getJson(`/api/backtest-runs${qs}`);
 }
 
+export function fetchPnlCalendar(year, month) {
+  const params = new URLSearchParams();
+  if (year) params.set('year', year);
+  if (month) params.set('month', month);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return getJson(`/api/pnl-calendar${qs}`);
+}
+
+export function fetchCredentials() {
+  return getJson('/api/credentials');
+}
+
 export async function putStrategySettings(strategyId, settings) {
   const res = await fetch(`${BASE_URL}/api/strategy-settings/${encodeURIComponent(strategyId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    throw new Error(`Worker antwortete mit ${res.status}`);
+  }
+  const body = await res.json();
+  return body.data;
+}
+
+export async function patchStrategyActive(strategyId, active) {
+  const res = await fetch(`${BASE_URL}/api/strategies/${encodeURIComponent(strategyId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active }),
   });
   if (!res.ok) {
     throw new Error(`Worker antwortete mit ${res.status}`);

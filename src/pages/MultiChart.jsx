@@ -1,6 +1,16 @@
+import { useCallback, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import TradingViewWidget from '../components/TradingViewWidget';
-import { MULTI_CHART_TILES, BOT_ACTIVITY, STRATEGY_MATRIX, FACTOR_UTIL } from '../data/mockData';
+import { MULTI_CHART_TILES, STRATEGY_MATRIX, FACTOR_UTIL } from '../data/mockData';
+import { fetchActivityLog } from '../api/client';
+import { useFetch } from '../api/useFetch';
+
+function toBotActivityRow(a) {
+  const closed = /geschlossen/.test(a.message);
+  const opened = /eröffnet|eroeffnet/.test(a.message);
+  const timePart = (a.timestamp || '').split(' ')[1] || a.timestamp;
+  return { time: timePart, mark: closed ? '✕' : opened ? '▸' : '·', text: a.message };
+}
 
 function badgeStyle(kind) {
   if (kind === 'active') return { fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: '#fff', background: 'var(--acc)', padding: '1px 5px', letterSpacing: '0.06em' };
@@ -37,6 +47,13 @@ function ChartTile({ tile }) {
 export default function MultiChart() {
   const { dense } = useApp();
 
+  const loadActivity = useCallback(() => fetchActivityLog(), []);
+  const activityQ = useFetch(loadActivity, [loadActivity]);
+  const botActivity = useMemo(
+    () => (activityQ.data || []).slice(0, 6).map(toBotActivityRow),
+    [activityQ.data]
+  );
+
   return (
     <div style={{ height: '100%', display: 'grid', gridTemplateColumns: dense ? '1fr 268px' : '1fr', gap: 1, background: 'var(--line)', minHeight: 0 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(290px,1fr))', gridAutoRows: 'minmax(210px,1fr)', gap: 1, background: 'var(--line)', overflow: 'auto', minHeight: 0 }}>
@@ -47,7 +64,7 @@ export default function MultiChart() {
         <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
           <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Bot-Aktivität</div>
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, lineHeight: 1.75, padding: '7px 9px', borderBottom: '1px solid var(--line)', color: 'var(--txt2)' }}>
-            {BOT_ACTIVITY.map((a, i) => (
+            {botActivity.map((a, i) => (
               <div key={i}>
                 <span style={{ color: 'var(--txt3)' }}>{a.time}</span>{' '}
                 <span style={{ color: a.mark === '·' ? 'var(--txt3)' : 'var(--acc)' }}>{a.mark}</span> {a.text}

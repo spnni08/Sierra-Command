@@ -23,9 +23,27 @@ export async function handleApiRoute(request, url, env) {
     return getBacktestRuns(url, env);
   }
 
+  if (path === '/pnl-calendar' && request.method === 'GET') {
+    return getPnlCalendar(url, env);
+  }
+
+  // Connection status only — never the encrypted secret/key itself. There is
+  // no write endpoint yet (adding a credential means designing a secure
+  // encrypt-on-write flow, which is separate, larger work); this exists so
+  // the Settings page can show real "connected" state instead of fabricated
+  // account data.
+  if (path === '/credentials' && request.method === 'GET') {
+    return getCredentials(env);
+  }
+
   const settingsMatch = path.match(/^\/strategy-settings\/([^/]+)$/);
   if (settingsMatch && request.method === 'PUT') {
     return putStrategySettings(request, env, settingsMatch[1]);
+  }
+
+  const strategyMatch = path.match(/^\/strategies\/([^/]+)$/);
+  if (strategyMatch && request.method === 'PATCH') {
+    return patchStrategy(request, env, strategyMatch[1]);
   }
 
   return Response.json({ error: 'not_found', path }, { status: 404 });
@@ -184,6 +202,85 @@ async function putStrategySettings(request, env, strategyId) {
         session_filter: parseJsonColumn(updated.session_filter, []),
       },
     });
+  } catch (err) {
+    return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
+  }
+}
+
+async function patchStrategy(request, env, strategyId) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 });
+  }
+
+  if (typeof body?.active !== 'boolean') {
+    return Response.json({ error: 'invalid_body', message: 'Expected { active: boolean }' }, { status: 400 });
+  }
+
+  try {
+    const strategy = await env.DB.prepare('SELECT id FROM strategies WHERE id = ?').bind(strategyId).first();
+    if (!strategy) {
+      return Response.json({ error: 'not_found', message: 'strategy does not exist' }, { status: 404 });
+    }
+
+    await env.DB.prepare(`UPDATE strategies SET active = ?, updated_at = datetime('now') WHERE id = ?`)
+      .bind(body.active ? 1 : 0, strategyId)
+      .run();
+
+    const updated = await env.DB.prepare('SELECT id, active FROM strategies WHERE id = ?').bind(strategyId).first();
+    return Response.json({ data: { id: updated.id, active: !!updated.active } });
+  } catch (err) {
+    return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
+  }
+}
+
+// Daily PnL grouped by source (mt5 = oanda_*, exchange = binance_*), for the
+// Log page's calendar. `year`/`month` default to the current UTC month.
+async function getPnlCalendar(url, env) {
+  try {
+    const now = new Date();
+    const year = parseInt(url.searchParams.get('year'), 10) || now.getUTCFullYear();
+    const month = parseInt(url.searchParams.get('month'), 10) || now.getUTCMonth() + 1;
+    const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+
+    const { results } = await env.DB.prepare(
+      `SELECT
+         CAST(strftime('%d', closed_at) AS INTEGER) as day,
+         CASE WHEN source LIKE 'oanda%' THEN 'mt5' ELSE 'exchange' END as src_group,
+         SUM(pnl) as total
+       FROM trades
+       WHERE status = 'closed' AND closed_at IS NOT NULL AND strftime('%Y-%m', closed_at) = ?
+       GROUP BY day, src_group`
+    )
+      .bind(yearMonth)
+      .all();
+
+    const days = {};
+    for (const row of results) {
+      const day = days[row.day] ?? (days[row.day] = { mt5: 0, exch: 0 });
+      if (row.src_group === 'mt5') day.mt5 = row.total;
+      else day.exch = row.total;
+    }
+    for (const day of Object.values(days)) {
+      day.total = day.mt5 + day.exch;
+    }
+
+    return Response.json({ data: { year, month, days } });
+  } catch (err) {
+    return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
+  }
+}
+
+// Connection status only (id, provider, env, created_at) — the
+// encrypted_key/encrypted_secret columns are never returned here.
+async function getCredentials(env) {
+  try {
+    const { results } = await env.DB.prepare(
+      'SELECT id, provider, env, created_at FROM api_credentials ORDER BY provider, env'
+    ).all();
+    return Response.json({ data: results });
   } catch (err) {
     return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
   }

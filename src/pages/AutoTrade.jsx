@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { SESSIONS, NEWSLV } from '../data/mockData';
-import { fetchStrategies, putStrategySettings } from '../api/client';
+import { fetchStrategies, putStrategySettings, patchStrategyActive } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
 
@@ -105,13 +105,17 @@ export default function AutoTrade() {
       arr[i] = next;
 
       // Best-effort write-through to the backend; UI stays optimistic even
-      // if the PUT fails (surfaced only via console, not blocking the page).
-      putStrategySettings(next.id, {
-        risk_per_trade_pct: next.risk,
-        session_filter: sessionFilterFromIdx(next.sessionIdx),
-        correlation_limit: next.corr,
-        news_filter_threshold: newsThresholdFromIdx(next.newsIdx),
-      }).catch(err => console.error('Failed to save strategy settings', err));
+      // if the write fails (surfaced only via console, not blocking the page).
+      if (patch.active !== undefined) {
+        patchStrategyActive(next.id, next.active).catch(err => console.error('Failed to save strategy active state', err));
+      } else {
+        putStrategySettings(next.id, {
+          risk_per_trade_pct: next.risk,
+          session_filter: sessionFilterFromIdx(next.sessionIdx),
+          correlation_limit: next.corr,
+          news_filter_threshold: newsThresholdFromIdx(next.newsIdx),
+        }).catch(err => console.error('Failed to save strategy settings', err));
+      }
 
       return arr;
     });

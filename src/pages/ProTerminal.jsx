@@ -1,11 +1,43 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import TradingViewWidget from '../components/TradingViewWidget';
 import CandlestickChart from '../components/CandlestickChart';
-import { openTradesData, STRATEGY_SUGGESTIONS, SIGNAL_FACTORS, MULTI_CHART_TILES } from '../data/mockData';
-import { fetchBacktestRuns } from '../api/client';
+import { STRATEGY_SUGGESTIONS, SIGNAL_FACTORS, MULTI_CHART_TILES } from '../data/mockData';
+import { fetchBacktestRuns, fetchTrades } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
+
+function fmtEntryNum(v, dec = 2) {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function fmtSignedPnl(trades) {
+  const withPnl = trades.map(t => parseDeNum(t.pnl.replace('−', '-'))).filter(Number.isFinite);
+  if (withPnl.length === 0) return '—';
+  const sum = withPnl.reduce((a, b) => a + b, 0);
+  return (sum >= 0 ? '+' : '−') + Math.abs(sum).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+
+function fmtOpenDuration(openedAt) {
+  const start = new Date(openedAt.replace(' ', 'T') + 'Z');
+  const hrs = Math.max(0, (new Date() - start) / 3_600_000);
+  return hrs.toFixed(2).replace('.', ',') + ' h';
+}
+
+function toOpenTradeRow(t) {
+  return {
+    symbol: t.symbol,
+    dir: t.direction === 'long' ? 'LONG' : 'SHORT',
+    vol: fmtEntryNum(t.volume, 2),
+    entry: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
+    sl: fmtEntryNum(t.sl, t.sl < 50 ? 5 : 2),
+    tp: fmtEntryNum(t.tp, t.tp < 50 ? 5 : 2),
+    strategy: '—', // trades.signal_id -> signals -> strategies join not wired yet
+    duration: fmtOpenDuration(t.opened_at),
+    pnl: t.pnl === null || t.pnl === undefined ? '—' : (t.pnl >= 0 ? '+' : '−') + fmtEntryNum(Math.abs(t.pnl), 2),
+  };
+}
 
 function fmtPct(v) {
   if (v === null || v === undefined) return '—';
@@ -63,8 +95,11 @@ export default function ProTerminal() {
   const [activeSym, setActiveSym] = useState('BTCUSD');
   const [activeTf, setActiveTf] = useState('M15');
   const activeTile = MULTI_CHART_TILES.find(t => t.sym === activeSym) || MULTI_CHART_TILES[0];
-  const trades = openTradesData();
-  const primaryTrade = trades[0];
+
+  const loadOpenTrades = useCallback(() => fetchTrades('open'), []);
+  const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades]);
+  const trades = useMemo(() => (openTradesQ.data || []).map(toOpenTradeRow), [openTradesQ.data]);
+  const primaryTrade = trades[0] ?? { entry: '—', tp: '—', sl: '—', strategy: '—', pnl: '—', duration: '—' };
   const entryNum = parseDeNum(primaryTrade.entry);
   const tpPct = fmtSignedPct((parseDeNum(primaryTrade.tp) - entryNum) / entryNum);
   const slPct = fmtSignedPct((parseDeNum(primaryTrade.sl) - entryNum) / entryNum);
@@ -121,8 +156,10 @@ export default function ProTerminal() {
           <div style={{ display: 'flex', alignItems: 'center', padding: '5px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
             <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Aktuelle Trades</div>
             <div style={{ flex: 1 }} />
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>3 offen · Exposure 1,42% · schwebend <span style={{ color: 'var(--txt)' }}>+418,60 €</span></div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>{trades.length} offen · schwebend <span style={{ color: 'var(--txt)' }}>{fmtSignedPnl(trades)}</span></div>
           </div>
+          <StatusPanel loading={openTradesQ.loading} error={openTradesQ.error} onRetry={openTradesQ.reload} />
+          {!openTradesQ.loading && !openTradesQ.error && (
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflowX: 'auto' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '78px 62px 56px 88px 88px 88px 1fr 84px', padding: '4px 9px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 640 }}>
               <div>SYMBOL</div><div>RICHTUNG</div><div style={{ textAlign: 'right' }}>VOL.</div><div style={{ textAlign: 'right' }}>EINSTIEG</div><div style={{ textAlign: 'right' }}>SL</div><div style={{ textAlign: 'right' }}>TP</div><div style={{ textAlign: 'right' }}>STRATEGIE</div><div style={{ textAlign: 'right' }}>P/L</div>
@@ -137,6 +174,7 @@ export default function ProTerminal() {
               </div>
             ))}
           </div>
+          )}
         </div>
       </div>
 
