@@ -1,8 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import TradingViewWidget from '../components/TradingViewWidget';
 import CandlestickChart from '../components/CandlestickChart';
-import { openTradesData, STRATEGY_SUGGESTIONS, SIGNAL_FACTORS } from '../data/mockData';
+import { openTradesData, STRATEGY_SUGGESTIONS, SIGNAL_FACTORS, MULTI_CHART_TILES } from '../data/mockData';
 import { fetchBacktestRuns } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
@@ -24,6 +24,17 @@ function tfStyle(active) {
     border: active ? '1px solid var(--acc)' : '1px solid var(--line2)',
     background: active ? 'var(--acc)' : 'transparent',
     color: active ? '#fff' : 'var(--txt2)',
+    cursor: 'pointer',
+  };
+}
+
+function symBtnStyle(active) {
+  return {
+    padding: '2px 8px', fontFamily: 'inherit', fontWeight: 700, fontSize: 12,
+    border: active ? '1px solid var(--acc)' : '1px solid var(--line2)',
+    background: active ? 'var(--acc)' : 'transparent',
+    color: active ? '#fff' : 'var(--txt)',
+    cursor: 'pointer', letterSpacing: '0.03em',
   };
 }
 
@@ -49,6 +60,9 @@ function fmtSignedPct(v) {
 
 export default function ProTerminal() {
   const { dense } = useApp();
+  const [activeSym, setActiveSym] = useState('BTCUSD');
+  const [activeTf, setActiveTf] = useState('M15');
+  const activeTile = MULTI_CHART_TILES.find(t => t.sym === activeSym) || MULTI_CHART_TILES[0];
   const trades = openTradesData();
   const primaryTrade = trades[0];
   const entryNum = parseDeNum(primaryTrade.entry);
@@ -65,12 +79,15 @@ export default function ProTerminal() {
 
         <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', flexWrap: 'wrap' }}>
-            <div style={{ fontWeight: 700, fontSize: 13, letterSpacing: '0.03em' }}>BTC/USD</div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15 }}>64.812,50</div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>+542,10 (+0,84%)</div>
+            <div style={{ display: 'flex', gap: 0, fontFamily: "'IBM Plex Mono',monospace" }}>
+              {MULTI_CHART_TILES.map(t => (
+                <button key={t.sym} onClick={() => setActiveSym(t.sym)} style={symBtnStyle(t.sym === activeSym)}>{t.label}</button>
+              ))}
+            </div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15 }}>{activeTile.price}</div>
             <div style={{ width: 1, height: 16, background: 'var(--line)' }} />
             <div style={{ display: 'flex', gap: 0, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
-              {TF.map(t => <div key={t} style={tfStyle(t === 'M15')}>{t}</div>)}
+              {TF.map(t => <div key={t} onClick={() => setActiveTf(t)} style={tfStyle(t === activeTf)}>{t}</div>)}
             </div>
             {dense && (
               <div style={{ display: 'flex', gap: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>
@@ -80,10 +97,10 @@ export default function ProTerminal() {
               </div>
             )}
             <div style={{ flex: 1 }} />
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>MOMENTUM-M7 · AKTIV</div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>{activeTile.strategy.split(' · ')[0]} · AKTIV</div>
           </div>
           <div style={{ flex: 1, minHeight: 0, background: 'var(--chart)' }}>
-            <TradingViewWidget symbol="BTC" interval="M15" />
+            <TradingViewWidget symbol={activeSym} interval={activeTf} />
           </div>
           {/* The free TradingView embed can't render TP/SL lines on the chart itself
               (no chart-internals access outside the paid Advanced Charts Library), so
