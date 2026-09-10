@@ -102,6 +102,21 @@ jobs:
           else
             echo "trades.exit_mode already present — skipping."
           fi
+
+          echo "Probing backtest_runs.win_rate..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT win_rate FROM backtest_runs LIMIT 1" >/tmp/probe_backtest.log 2>&1
+          BACKTEST_PROBE=$?
+          set -e
+          if [ $BACKTEST_PROBE -ne 0 ]; then
+            echo "backtest_runs.win_rate/trade_count missing — adding them (plain ADD COLUMN, nothing references backtest_runs so no rebuild needed)."
+            npx wrangler d1 execute sierra-command-db --remote --command "
+              ALTER TABLE backtest_runs ADD COLUMN win_rate REAL;
+              ALTER TABLE backtest_runs ADD COLUMN trade_count INTEGER;
+            "
+          else
+            echo "backtest_runs.win_rate already present — skipping."
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Sync Binance Testnet secrets (skipped until repo secrets exist)

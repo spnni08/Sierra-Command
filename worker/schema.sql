@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
   max_drawdown REAL,
   profit_factor REAL,
   out_of_sample_deviation REAL,
+  win_rate REAL,
+  trade_count INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy_id ON backtest_runs(strategy_id);
