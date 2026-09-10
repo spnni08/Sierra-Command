@@ -76,7 +76,7 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       error: 'no_indicator_adapter',
       strategyId,
       message:
-        'This strategy\'s factors gate on Pine-side semantic flags (S&R zones, Ichimoku, ICT swing structure, volume ratios) that are not plain OHLC-derived indicators, or need volume data CoinGecko\'s free OHLC endpoint does not provide. Only crypto_baseline/crypto_baseline_sl are backtestable today.',
+        'This strategy needs data or structure this backtest engine cannot derive: real candlestick body/wick patterns, true Volume Profile, ICT/SMC swing structure, or (crypto_flawless_victory) an engine feature this backtest doesn\'t implement (early exit on an opposite signal). See adapters.js\'s header comment for the exact reason per strategy.',
     };
   }
 

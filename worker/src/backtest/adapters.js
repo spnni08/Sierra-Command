@@ -3,16 +3,38 @@
 // same shape a real webhook payload carries — see routes/webhook.js).
 //
 // Only strategies whose factors read plain, well-defined technical
-// indicators computable from a close/high/low/open series are implemented
-// here. The other WAVESCOUT strategies gate on semantic Pine-side flags
-// that were never numeric indicators to begin with — S&R volume-profile
-// zone touches, Ichimoku Kumo/Chikou confirmation, ICT/SMC swing-structure
-// break-of-structure counts, candlestick pattern flags, orderflow volume
-// ratios (CoinGecko's free OHLC endpoint has no volume field at all). Faking
-// those as random/placeholder booleans would produce backtest numbers that
-// look real but aren't derived from anything — worse than not running them.
-// So only `crypto_baseline` has a real adapter for now; engine.js reports
-// "no_indicator_adapter" for any other strategy rather than pretending.
+// indicators computable from close/volume data are implemented here (see
+// candles.js: crypto candles are CoinGecko /market_chart daily closes with
+// real total_volumes attached, but open=high=low=close — no true intrabar
+// range). A strategy with a real adapter below may still be listed in
+// PARTIAL_ADAPTERS if one of its factors needed a documented close-only
+// simplification instead of the faithful Pine-side geometry.
+//
+// Strategies WITHOUT an adapter (engine.js reports "no_indicator_adapter"),
+// and why:
+//   - crypto_mfi_engulfing, crypto_holy_grail_adx_sma_bb: need real
+//     candlestick body/wick pattern detection (engulfing, hammer, doji,
+//     wick-touch-then-close-inside) — undetectable on flat synthesized OHLC
+//     where open=high=low=close; holy_grail's wick-touch factor is also
+//     structurally unsatisfiable (low<=bbLower && close>bbLower can't both
+//     hold when low===close).
+//   - crypto_sr_volume: needs true Volume Profile (VAL/VAH/POC from
+//     intrabar volume-at-price distribution) — CoinGecko's daily aggregate
+//     volume is one number per day, no price distribution to build that
+//     from.
+//   - crypto_ict_smc: BOS/CHoCH/order-block/FVG swing-structure detection —
+//     by the strategy module's own comment, this logic lives exclusively in
+//     Pine/backtest/ict_smc as the reference spec; not re-derivable from
+//     close-only candles.
+//   - crypto_flawless_victory: its BB/RSI/MFI indicators ARE derivable, but
+//     the real Pine strategy is long-only (its "Sell" trigger closes the
+//     long position via strategy.close, never opens a short — confirmed in
+//     both the Pine source and worker.js, which sends direction:"LONG" for
+//     both Buy and Sell payloads). This backtest engine only models
+//     symmetric long/short entries held to a fixed SL/TP — it has no
+//     "opposite signal closes the position early" mechanism, so faithfully
+//     backtesting this strategy needs an engine change, not a data
+//     workaround; forcing "Sell" into a short entry would misrepresent it.
 import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
