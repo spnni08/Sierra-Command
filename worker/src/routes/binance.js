@@ -1,5 +1,11 @@
 // Binance Futures Testnet routes — GET/data-only in this step, no order execution.
 // Base URL is Futures Testnet-specific (not Spot, not live Futures, not Kraken).
+//
+// Known limitation: as deployed, every request here gets a 403 from Binance
+// Testnet's CloudFront WAF (confirmed both signed and unsigned; not an IP
+// allowlist setting on the API key). See worker/README.md. Not working
+// around it — that would mean evading Binance's bot/abuse protection.
+// Re-check against the live Binance API when that integration is built.
 const BINANCE_FUTURES_TESTNET_API = 'https://testnet.binancefuture.com';
 
 export async function handleBinanceRoute(request, url, env) {
