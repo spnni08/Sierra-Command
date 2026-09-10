@@ -5,7 +5,7 @@ compatibility_date = "2026-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "sierra-command-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "11c3404b-faac-429f-bc48-9bd40ba93531"
 
 [vars]
 ALLOWED_ORIGIN = "https://sierra-command.web.app"
