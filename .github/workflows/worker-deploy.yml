@@ -141,6 +141,23 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+      # CoinGecko's fully-anonymous public API blocks Cloudflare Workers'
+      # egress IPs (confirmed live: /coingecko/candles and the backtest
+      # engine's crypto path both 403 from the deployed Worker while an
+      # identical request from a plain non-Workers IP succeeds) — a Demo API
+      # key (free, register at coingecko.com/en/api/pricing) routes requests
+      # through CoinGecko's authenticated path instead of the anonymous one
+      # their anti-abuse IP filtering blocks.
+      - name: Sync CoinGecko secret (skipped until repo secret exists)
+        run: |
+          if [ -n "$COINGECKO_API_KEY" ]; then
+            echo "$COINGECKO_API_KEY" | npx wrangler secret put COINGECKO_API_KEY
+          else
+            echo "COINGECKO_API_KEY not set as a repo secret yet — skipping."
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
       - name: Deploy worker
         run: npx wrangler deploy
         env:
