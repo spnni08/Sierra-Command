@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS trades (
   sl REAL,
   tp REAL,
   volume REAL NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('kraken_demo','kraken_live','oanda_demo','oanda_live')),
+  source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   pnl REAL,
   opened_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -72,9 +72,14 @@ CREATE TABLE IF NOT EXISTS strategy_settings (
 
 -- Credentials are encrypted client-side of the DB (see worker/src/lib/crypto.js);
 -- D1 only ever stores ciphertext. See README note below for rationale.
+--
+-- provider is 'binance' (Futures Testnet for now, live Futures/Spot later) or
+-- 'oanda'. Kraken has no public spot demo account and was dropped before this
+-- table was ever created in D1 (the only prior deploy failed before running
+-- this file), so no migration of existing rows is needed here.
 CREATE TABLE IF NOT EXISTS api_credentials (
   id TEXT PRIMARY KEY,
-  provider TEXT NOT NULL CHECK (provider IN ('kraken','oanda')),
+  provider TEXT NOT NULL CHECK (provider IN ('binance','oanda')),
   env TEXT NOT NULL CHECK (env IN ('demo','live')),
   encrypted_key TEXT NOT NULL,
   encrypted_secret TEXT NOT NULL,
@@ -84,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_api_credentials_provider_env ON api_credentials(p
 
 CREATE TABLE IF NOT EXISTS activity_log (
   id TEXT PRIMARY KEY,
-  source TEXT NOT NULL CHECK (source IN ('system','kraken','oanda')),
+  source TEXT NOT NULL CHECK (source IN ('system','binance','oanda')),
   message TEXT NOT NULL,
   timestamp TEXT NOT NULL DEFAULT (datetime('now')),
   related_trade_id TEXT REFERENCES trades(id)
