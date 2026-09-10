@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useApp } from '../context/AppContext';
+import TradingViewWidget from '../components/TradingViewWidget';
 import CandlestickChart from '../components/CandlestickChart';
 import { openTradesData, STRATEGY_SUGGESTIONS, SIGNAL_FACTORS } from '../data/mockData';
 import { fetchBacktestRuns } from '../api/client';
@@ -36,9 +37,23 @@ function metricBox(label, val, accent) {
   );
 }
 
+function parseDeNum(s) {
+  if (!s) return NaN;
+  return parseFloat(String(s).replace(/\./g, '').replace(',', '.'));
+}
+function fmtSignedPct(v) {
+  if (!Number.isFinite(v)) return '—';
+  const s = (v * 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (v >= 0 ? '+' : '') + s + '%';
+}
+
 export default function ProTerminal() {
   const { dense } = useApp();
   const trades = openTradesData();
+  const primaryTrade = trades[0];
+  const entryNum = parseDeNum(primaryTrade.entry);
+  const tpPct = fmtSignedPct((parseDeNum(primaryTrade.tp) - entryNum) / entryNum);
+  const slPct = fmtSignedPct((parseDeNum(primaryTrade.sl) - entryNum) / entryNum);
 
   const loadBacktests = useCallback(() => fetchBacktestRuns(), []);
   const backtestQ = useFetch(loadBacktests, [loadBacktests]);
@@ -68,16 +83,20 @@ export default function ProTerminal() {
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>MOMENTUM-M7 · AKTIV</div>
           </div>
           <div style={{ flex: 1, minHeight: 0, background: 'var(--chart)' }}>
-            <CandlestickChart symbol="BTCUSD" kind="candles" n={120} levels />
+            <TradingViewWidget symbol="BTC" interval="M15" />
           </div>
+          {/* The free TradingView embed can't render TP/SL lines on the chart itself
+              (no chart-internals access outside the paid Advanced Charts Library), so
+              Entry/SL/TP are shown here as a badge row instead — values pulled from the
+              same "Aktuelle Trades" table below (primaryTrade), never re-entered. */}
           <div style={{ display: 'flex', gap: 16, padding: '5px 9px', borderTop: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, background: 'var(--panel2)', flexWrap: 'wrap' }}>
-            <div style={{ color: 'var(--txt2)' }}>EINSTIEG <span style={{ color: 'var(--txt)' }}>64.310,00</span></div>
-            <div style={{ color: 'var(--txt2)' }}>TP <span style={{ color: 'var(--txt)' }}>66.150,00</span> <span style={{ color: 'var(--txt3)' }}>(+2,86%)</span></div>
-            <div style={{ color: 'var(--txt2)' }}>SL <span style={{ color: 'var(--txt)' }}>63.720,00</span> <span style={{ color: 'var(--txt3)' }}>(−0,92%)</span></div>
-            <div style={{ color: 'var(--txt2)' }}>CRV <span style={{ color: 'var(--txt)' }}>1 : 3,12</span></div>
-            <div style={{ color: 'var(--txt2)' }}>RISIKO <span style={{ color: 'var(--txt)' }}>0,8% · 236 €</span></div>
+            <div style={{ color: 'var(--txt2)' }}>EINSTIEG <span style={{ color: 'var(--txt)' }}>{primaryTrade.entry}</span></div>
+            <div style={{ color: 'var(--txt2)' }}>TP <span style={{ color: 'var(--txt)' }}>{primaryTrade.tp}</span> <span style={{ color: 'var(--txt3)' }}>({tpPct})</span></div>
+            <div style={{ color: 'var(--txt2)' }}>SL <span style={{ color: 'var(--txt)' }}>{primaryTrade.sl}</span> <span style={{ color: 'var(--txt3)' }}>({slPct})</span></div>
+            <div style={{ color: 'var(--txt2)' }}>STRATEGIE <span style={{ color: 'var(--txt)' }}>{primaryTrade.strategy}</span></div>
+            <div style={{ color: 'var(--txt2)' }}>P/L <span style={{ color: 'var(--txt)' }}>{primaryTrade.pnl}</span></div>
             <div style={{ flex: 1 }} />
-            <div style={{ color: 'var(--txt2)' }}>LAUFZEIT <span style={{ color: 'var(--txt)' }}>02:41 h</span></div>
+            <div style={{ color: 'var(--txt2)' }}>LAUFZEIT <span style={{ color: 'var(--txt)' }}>{primaryTrade.duration}</span></div>
           </div>
         </div>
 
