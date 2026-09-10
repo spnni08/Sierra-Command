@@ -26,6 +26,10 @@ account from WAVESCOUT (so D1's daily quota isn't shared).
   — Alpha Vantage's free tier has no raw index endpoint). `interval` is
   `daily` (default) or `intraday` (add `intraday_interval`, default
   `60min`). Returns `not_configured` until `ALPHA_VANTAGE_API_KEY` is set.
+  Confirmed end-to-end working (secret synced, request/response handling
+  correct); the free-tier key is capped at 25 requests/day by Alpha
+  Vantage, resetting daily — a `502 alphavantage_api_error` with a `Note`/
+  `Information` field is that quota, not a bug.
 
 ## Deploy
 
