@@ -1,5 +1,5 @@
 import { useApp } from '../context/AppContext';
-import CandlestickChart from '../components/CandlestickChart';
+import TradingViewWidget from '../components/TradingViewWidget';
 import { MULTI_CHART_TILES, BOT_ACTIVITY, STRATEGY_MATRIX, FACTOR_UTIL } from '../data/mockData';
 
 function badgeStyle(kind) {
@@ -18,7 +18,7 @@ function ChartTile({ tile }) {
         <div style={badgeStyle(tile.badge.kind)}>{tile.badge.text}</div>
       </div>
       <div style={{ flex: 1, minHeight: 0, background: 'var(--chart)' }}>
-        <CandlestickChart symbol={tile.sym} kind="candles" n={tile.n} />
+        <TradingViewWidget symbol={tile.sym} interval={tile.tf} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderTop: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt2)' }}>
         <div style={{ display: 'flex', gap: 2 }}>
