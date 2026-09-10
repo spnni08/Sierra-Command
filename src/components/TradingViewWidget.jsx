@@ -9,12 +9,15 @@ import { useApp } from '../context/AppContext';
 //  - BTC/ETH/SOL: BINANCE:<X>USDT — Binance is TradingView's standard,
 //    always-available crypto data source for these pairs.
 //  - EURUSD: FX:EURUSD — TradingView's FX (ICE) consolidated feed.
-//  - S&P 500: SP:SPX — the S&P Dow Jones Indices feed for the raw index,
-//    a valid, chartable symbol on the free widget (alternative TVC:SPX also
-//    works; SP:SPX was chosen as the primary index-provider symbol).
-//  - NASDAQ: NASDAQ:NDX — the Nasdaq-100 index as published by Nasdaq itself,
-//    a valid, chartable symbol on the free widget (alternative TVC:NDX also
-//    works).
+//  - S&P 500: OANDA:SPX500USD — SP:SPX and NASDAQ:NDX (the raw index feeds)
+//    turned out NOT to resolve on the free embed widget in practice: it
+//    silently fell back to the widget's default demo symbol (AAPL) instead
+//    of erroring, which is why both S&P 500 and NAS 100 tiles were showing
+//    "Apple Inc". OANDA:SPX500USD is TradingView's standard CFD-tracked S&P
+//    500 feed and is confirmed to resolve correctly on the free widget.
+//  - NASDAQ: OANDA:NAS100USD — same situation; this is TradingView's
+//    standard CFD-tracked Nasdaq-100 feed, confirmed working on the free
+//    widget.
 export const TV_SYMBOL_MAP = {
   BTC: 'BINANCE:BTCUSDT',
   BTCUSD: 'BINANCE:BTCUSDT',
@@ -23,10 +26,10 @@ export const TV_SYMBOL_MAP = {
   SOL: 'BINANCE:SOLUSDT',
   SOLUSD: 'BINANCE:SOLUSDT',
   EURUSD: 'FX:EURUSD',
-  'S&P500': 'SP:SPX',
-  SPX500: 'SP:SPX',
-  NASDAQ: 'NASDAQ:NDX',
-  NAS100: 'NASDAQ:NDX',
+  'S&P500': 'OANDA:SPX500USD',
+  SPX500: 'OANDA:SPX500USD',
+  NASDAQ: 'OANDA:NAS100USD',
+  NAS100: 'OANDA:NAS100USD',
 };
 
 // TradingView interval codes: 1, 5, 15, 30, 60, 240, D, W, M.
