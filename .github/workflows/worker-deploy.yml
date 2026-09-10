@@ -22,6 +22,70 @@ jobs:
         run: npx wrangler d1 execute sierra-command-db --remote --file=./schema.sql
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # `CREATE TABLE IF NOT EXISTS` in schema.sql is a no-op against a table
+      # that already exists remotely — it does NOT retrofit new columns or
+      # constraint changes onto it. Every column/CHECK added to an
+      # already-live table needs an explicit, idempotent migration here too
+      # (probe with a cheap SELECT/ALTER attempt, tolerate the "already
+      # applied" failure, only run the real migration when the probe shows
+      # it's actually missing). This is how `trades`/`signals.exit_mode` and
+      # `trades.source`'s widened CHECK constraint (added on top of tables
+      # that already existed on the remote D1) actually reach production.
+      - name: Migrate existing table columns (idempotent)
+        run: |
+          set -e
+
+          echo "Probing signals.exit_mode..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT exit_mode FROM signals LIMIT 1" >/tmp/probe_signals.log 2>&1
+          SIGNALS_PROBE=$?
+          set -e
+          if [ $SIGNALS_PROBE -ne 0 ]; then
+            echo "signals.exit_mode missing — adding it."
+            npx wrangler d1 execute sierra-command-db --remote --command "ALTER TABLE signals ADD COLUMN exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing'))"
+          else
+            echo "signals.exit_mode already present — skipping."
+          fi
+
+          echo "Probing trades.exit_mode..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT exit_mode FROM trades LIMIT 1" >/tmp/probe_trades.log 2>&1
+          TRADES_PROBE=$?
+          set -e
+          if [ $TRADES_PROBE -ne 0 ]; then
+            echo "trades.exit_mode missing — rebuilding trades with the new column and the widened source CHECK (SQLite can't ALTER a CHECK constraint in place)."
+            npx wrangler d1 execute sierra-command-db --remote --command "
+              CREATE TABLE IF NOT EXISTS trades_migrated (
+                id TEXT PRIMARY KEY,
+                signal_id TEXT REFERENCES signals(id),
+                symbol TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('long','short')),
+                entry REAL NOT NULL,
+                sl REAL,
+                tp REAL,
+                volume REAL NOT NULL,
+                source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live','oanda_demo_simulated')),
+                status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+                pnl REAL,
+                exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing')),
+                opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+                closed_at TEXT
+              );
+              INSERT INTO trades_migrated (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, opened_at, closed_at)
+                SELECT id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, 'fixed', opened_at, closed_at FROM trades;
+              DROP TABLE trades;
+              ALTER TABLE trades_migrated RENAME TO trades;
+              CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
+              CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+              CREATE INDEX IF NOT EXISTS idx_trades_source ON trades(source);
+              CREATE INDEX IF NOT EXISTS idx_trades_signal_id ON trades(signal_id);
+              CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades(opened_at);
+            "
+          else
+            echo "trades.exit_mode already present — skipping."
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Sync Binance Testnet secrets (skipped until repo secrets exist)
         run: |
           if [ -n "$BINANCE_TESTNET_API_KEY" ]; then
