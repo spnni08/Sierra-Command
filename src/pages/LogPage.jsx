@@ -1,9 +1,27 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { calendarData } from '../data/mockData';
-import { fetchTrades, fetchActivityLog } from '../api/client';
+import { fetchTrades, fetchActivityLog, fetchPnlCalendar } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
+
+// Builds the calendar grid (leading blanks + one cell per day of the month)
+// from the real per-day PnL totals returned by /api/pnl-calendar.
+function buildCalendarCells(year, month, days) {
+  const first = new Date(year, month - 1, 1);
+  const lead = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const day = days?.[d];
+    if (!day) {
+      cells.push({ day: d, hasData: false });
+    } else {
+      cells.push({ day: d, hasData: true, mt5: day.mt5, exch: day.exch, total: day.total });
+    }
+  }
+  return cells;
+}
 
 function segBtn(active, first) {
   return {
@@ -79,8 +97,10 @@ export default function LogPage() {
 
   const loadTrades = useCallback(() => fetchTrades('open'), []);
   const loadActivity = useCallback(() => fetchActivityLog(), []);
+  const loadPnlCalendar = useCallback(() => fetchPnlCalendar(), []);
   const tradesQ = useFetch(loadTrades, [loadTrades]);
   const activityQ = useFetch(loadActivity, [loadActivity]);
+  const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar]);
 
   const openTrades = useMemo(() => {
     const rows = (tradesQ.data || []).map(toRowTrade);
@@ -103,8 +123,15 @@ export default function LogPage() {
     });
   }, [activityQ.data, logStatus, logSrc]);
 
-  const calRaw = useMemo(() => calendarData(), []);
+  const calRaw = useMemo(() => {
+    if (!calendarQ.data) return [];
+    return buildCalendarCells(calendarQ.data.year, calendarQ.data.month, calendarQ.data.days);
+  }, [calendarQ.data]);
   const selDay = calRaw.find(c => c && c.day === selectedDay && c.hasData);
+  const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+  const calendarTitle = calendarQ.data
+    ? `${MONTH_NAMES[calendarQ.data.month - 1]} ${calendarQ.data.year}`
+    : '—';
   const logCount = openTrades.length + activityLog.length;
 
   return (
@@ -170,7 +197,9 @@ export default function LogPage() {
         </div>
 
         <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-          <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>PNL-Kalender · September 2026</div>
+          <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>PNL-Kalender · {calendarTitle}</div>
+          <StatusPanel loading={calendarQ.loading} error={calendarQ.error} onRetry={calendarQ.reload} />
+          {!calendarQ.loading && !calendarQ.error && (
           <div style={{ padding: '10px 12px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3, fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt3)', textAlign: 'center', marginBottom: 4 }}>
               {WEEKDAYS.map(d => <div key={d}>{d}</div>)}
@@ -201,6 +230,7 @@ export default function LogPage() {
               })}
             </div>
           </div>
+          )}
           <div style={{ padding: '10px 12px', borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>Tag {selectedDay} · nach Quelle</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
