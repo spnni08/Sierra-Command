@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS trades (
   tp REAL,
   volume REAL NOT NULL,
   -- 'oanda_demo_simulated' = no real OANDA account (KYC was never completed);
-  -- fills are simulated against real Alpha Vantage prices — see
+  -- fills are simulated against real Twelve Data prices — see
   -- worker/src/simulation/execution-engine.js.
   source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live','oanda_demo_simulated')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS strategy_settings (
 -- this file), so no migration of existing rows is needed here.
 CREATE TABLE IF NOT EXISTS api_credentials (
   id TEXT PRIMARY KEY,
-  provider TEXT NOT NULL CHECK (provider IN ('binance','oanda','alphavantage')),
+  provider TEXT NOT NULL CHECK (provider IN ('binance','oanda','coingecko','twelvedata')),
   env TEXT NOT NULL CHECK (env IN ('demo','live')),
   encrypted_key TEXT NOT NULL,
   encrypted_secret TEXT NOT NULL,
