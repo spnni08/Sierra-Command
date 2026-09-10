@@ -11,7 +11,7 @@ import Settings from './pages/Settings';
 
 function Shell() {
   const { theme } = useApp();
-  const [page, setPage] = useState('multi');
+  const [page, setPage] = useState('dash');
 
   return (
     <div
