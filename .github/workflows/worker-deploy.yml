@@ -54,7 +54,14 @@ jobs:
           set -e
           if [ $TRADES_PROBE -ne 0 ]; then
             echo "trades.exit_mode missing — rebuilding trades with the new column and the widened source CHECK (SQLite can't ALTER a CHECK constraint in place)."
+            # activity_log.related_trade_id REFERENCES trades(id): dropping
+            # trades while that FK is enforced fails even though the
+            # rebuilt table gets the exact same row ids back a moment
+            # later. Disable FK enforcement for just this rebuild (SQLite's
+            # own documented pattern for restructuring a referenced table),
+            # then turn it back on.
             npx wrangler d1 execute sierra-command-db --remote --command "
+              PRAGMA foreign_keys = OFF;
               CREATE TABLE IF NOT EXISTS trades_migrated (
                 id TEXT PRIMARY KEY,
                 signal_id TEXT REFERENCES signals(id),
@@ -80,6 +87,7 @@ jobs:
               CREATE INDEX IF NOT EXISTS idx_trades_source ON trades(source);
               CREATE INDEX IF NOT EXISTS idx_trades_signal_id ON trades(signal_id);
               CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades(opened_at);
+              PRAGMA foreign_keys = ON;
             "
           else
             echo "trades.exit_mode already present — skipping."
