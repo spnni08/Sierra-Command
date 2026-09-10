@@ -1,0 +1,16 @@
+name = "sierra-command-worker"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sierra-command-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+ALLOWED_ORIGIN = "https://sierra-command.web.app"
+
+# Secrets (set via `wrangler secret put <NAME>`, never committed here):
+#   CREDENTIALS_ENCRYPTION_KEY  - base64 AES-256 key for encrypting api_credentials rows
+#   KRAKEN_API_KEY / KRAKEN_API_SECRET - Kraken demo account credentials
+#   OANDA_API_TOKEN / OANDA_ACCOUNT_ID - OANDA practice account credentials
