@@ -1,9 +1,38 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import CandlestickChart from '../components/CandlestickChart';
-import { fetchTrades } from '../api/client';
+import { fetchTrades, fetchStrategies, fetchBacktestRuns } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
+
+function fmtNum(v, dec = 2) {
+  if (v === null || v === undefined) return '—';
+  return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v * 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+}
+
+// Per-strategy stats are joined from strategies + their latest backtest_runs
+// row — the fields actually available today (profit factor, Sharpe, max
+// drawdown). trades.signal_id isn't populated in the current seed data, so
+// there's no real per-strategy trade linkage yet to derive winrate/trade
+// count/live PnL from; that's a later step once real signal->trade linkage
+// exists.
+function toStrategyStatRow(strategy, backtestRuns) {
+  const runs = backtestRuns.filter(r => r.strategy_id === strategy.id);
+  const latest = runs[0] || null;
+  return {
+    id: strategy.id,
+    name: strategy.name,
+    active: strategy.active,
+    symbol: latest?.symbol ?? '—',
+    profitFactor: latest ? fmtNum(latest.profit_factor) : '—',
+    sharpe: latest ? fmtNum(latest.sharpe) : '—',
+    maxDrawdown: latest ? '−' + fmtPct(Math.abs(latest.max_drawdown)) : '—',
+  };
+}
 
 function fmtClosedTime(ts) {
   if (!ts) return '—';
@@ -53,6 +82,17 @@ export default function Dashboard({ goAutoSettings, goLog }) {
     () => (closedQ.data || []).slice(0, 5).map(toClosedRow),
     [closedQ.data]
   );
+
+  const loadStrategyStats = useCallback(
+    () => Promise.all([fetchStrategies(), fetchBacktestRuns()]),
+    []
+  );
+  const strategyStatsQ = useFetch(loadStrategyStats, [loadStrategyStats]);
+  const strategyStats = useMemo(() => {
+    if (!strategyStatsQ.data) return [];
+    const [strategies, backtestRuns] = strategyStatsQ.data;
+    return strategies.map(s => toStrategyStatRow(s, backtestRuns));
+  }, [strategyStatsQ.data]);
 
   const kpis = isBacktest
     ? [
@@ -154,6 +194,27 @@ export default function Dashboard({ goAutoSettings, goLog }) {
             <div style={{ color: 'var(--acc)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 14 }}>→</div>
           </button>
         </div>
+      </div>
+
+      <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Strategie-Statistik ({strategyStats.length})</div>
+        <StatusPanel loading={strategyStatsQ.loading} error={strategyStatsQ.error} onRetry={strategyStatsQ.reload} />
+        {!strategyStatsQ.loading && !strategyStatsQ.error && (
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflow: 'auto', maxHeight: 220 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 90px 90px', padding: '4px 12px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 480, position: 'sticky', top: 0, background: 'var(--panel)' }}>
+              <div>STRATEGIE</div><div>SYMBOL</div><div style={{ textAlign: 'right' }}>PROFIT-F.</div><div style={{ textAlign: 'right' }}>SHARPE</div><div style={{ textAlign: 'right' }}>MAX. DD</div>
+            </div>
+            {strategyStats.map(s => (
+              <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 90px 90px', padding: '5px 12px', borderBottom: '1px solid var(--line)', minWidth: 480 }}>
+                <div style={{ color: s.active ? 'var(--txt)' : 'var(--txt3)' }}>{s.name}</div>
+                <div style={{ color: 'var(--txt2)' }}>{s.symbol}</div>
+                <div style={{ textAlign: 'right' }}>{s.profitFactor}</div>
+                <div style={{ textAlign: 'right' }}>{s.sharpe}</div>
+                <div style={{ textAlign: 'right', color: 'var(--acc)' }}>{s.maxDrawdown}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {dense && (

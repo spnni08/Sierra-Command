@@ -118,7 +118,7 @@ export default function AutoTrade() {
   };
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', background: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <div style={{ height: '100%', display: 'grid', gridTemplateRows: 'auto auto auto 1fr', background: 'var(--line)', gap: 1, minHeight: 0 }}>
       <div style={{ background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px' }}>
         <div style={{ fontSize: 13, fontWeight: 700 }}>Auto-Trade-Einstellungen</div>
         <div style={{ flex: 1 }} />
@@ -139,25 +139,27 @@ export default function AutoTrade() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}><div style={{ color: 'var(--txt2)' }}>Handelszeiten (global)</div><div style={{ fontWeight: 600 }}>06:00 – 22:00 UTC</div></div>
       </div>
 
-      <div style={{ padding: '6px 16px', background: 'var(--panel)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>Pro Strategie</div>
+      <div style={{ padding: '6px 16px', background: 'var(--panel)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>Pro Strategie ({strategies.length})</div>
 
-      <StatusPanel loading={loading} error={error} onRetry={reload} />
+      <div style={{ overflow: 'auto', minHeight: 0 }}>
+        <StatusPanel loading={loading} error={error} onRetry={reload} />
 
-      {!loading && !error && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 1, background: 'var(--line)' }}>
-          {strategies.map((st, i) => (
-            <StrategyCard
-              key={st.id}
-              st={st}
-              onToggle={() => update(i, { active: !st.active })}
-              onRisk={e => update(i, { risk: parseFloat(e.target.value) })}
-              onCorr={e => update(i, { corr: parseFloat(e.target.value) })}
-              onSession={() => update(i, { sessionIdx: (st.sessionIdx + 1) % SESSIONS.length })}
-              onNews={() => update(i, { newsIdx: (st.newsIdx + 1) % NEWSLV.length })}
-            />
-          ))}
-        </div>
-      )}
+        {!loading && !error && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--line)' }}>
+            {strategies.map((st, i) => (
+              <StrategyCard
+                key={st.id}
+                st={st}
+                onToggle={() => update(i, { active: !st.active })}
+                onRisk={e => update(i, { risk: parseFloat(e.target.value) })}
+                onCorr={e => update(i, { corr: parseFloat(e.target.value) })}
+                onSession={() => update(i, { sessionIdx: (st.sessionIdx + 1) % SESSIONS.length })}
+                onNews={() => update(i, { newsIdx: (st.newsIdx + 1) % NEWSLV.length })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
