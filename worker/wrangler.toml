@@ -14,4 +14,7 @@ ALLOWED_ORIGIN = "https://sierra-command.web.app"
 #   CREDENTIALS_ENCRYPTION_KEY  - base64 AES-256 key for encrypting api_credentials rows
 #   BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET - Binance Futures Testnet credentials
 #   OANDA_API_TOKEN / OANDA_ACCOUNT_ID - OANDA practice account credentials
-#   ALPHA_VANTAGE_API_KEY - Alpha Vantage API key (forex + index-proxy candles)
+#   TWELVE_DATA_API_KEY - Twelve Data API key (forex + index-proxy candles,
+#                          and the OANDA simulation engine's live prices)
+#   COINGECKO_API_KEY - optional; CoinGecko's free tier works anonymously
+#                        without one, this only raises the rate limit
