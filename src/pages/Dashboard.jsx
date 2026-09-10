@@ -144,7 +144,7 @@ export default function Dashboard({ goAutoSettings, goLog }) {
         ); })()}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: dense ? '1fr 340px' : '1fr 300px', gap: 1, background: 'var(--line)', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: dense ? '1fr 340px' : '1fr 300px', gap: 1, background: 'var(--line)', flex: '1 1 320px', minHeight: 320 }}>
         <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 260 }}>
           <div style={{ display: 'flex', alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
             <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>{equityTitle}</div>
@@ -156,7 +156,7 @@ export default function Dashboard({ goAutoSettings, goLog }) {
           </div>
         </div>
 
-        <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
           <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>PNL nach Quelle · heute</div>
           <div style={{ padding: '11px 12px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 9 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
@@ -196,7 +196,7 @@ export default function Dashboard({ goAutoSettings, goLog }) {
         </div>
       </div>
 
-      <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Strategie-Statistik ({strategyStats.length})</div>
         <StatusPanel loading={strategyStatsQ.loading} error={strategyStatsQ.error} onRetry={strategyStatsQ.reload} />
         {!strategyStatsQ.loading && !strategyStatsQ.error && (
