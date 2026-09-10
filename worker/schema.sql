@@ -119,6 +119,13 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_related_trade_id ON activity_log(rel
 -- Fixed IDs + INSERT OR IGNORE keep this idempotent: safe to re-run on every
 -- deploy (this file runs unconditionally in worker-deploy.yml).
 
+-- Purge the TEST-MOMENTUM/TEST-BREAKOUT/TEST-TREND placeholder strategies
+-- from any D1 instance that was already seeded before the 22-strategy
+-- migration (INSERT OR IGNORE below never touches pre-existing rows, so a
+-- live database would otherwise keep these 3 alongside the 22 real ones).
+DELETE FROM strategy_settings WHERE strategy_id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
+DELETE FROM strategies WHERE id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
+
 INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_definition, created_at, updated_at) VALUES
   ('crypto_baseline', 'Crypto Baseline (RSI+EMA200)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
     '{"factors":["ema200_trend","rsi_pullback_35_65","ema_dist_sweet_spot_0.5_1.3pct","rsi_dead_zone_avoid"],"trailing_anchor":"atr"}',
