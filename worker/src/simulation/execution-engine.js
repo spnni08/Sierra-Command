@@ -2,62 +2,59 @@
 // SPX500, NAS100). There is no real OANDA account behind this — the demo
 // account was never opened because OANDA's KYC (tax ID / photo ID) was not
 // completed — so orders are never sent to a broker. Instead an order is
-// filled against real Alpha Vantage market data, with the static OANDA cost
+// filled against real Twelve Data market data, with the static OANDA cost
 // model from ./oanda-costs.js applied around the raw price, and the result
 // is stored as a normal `trades` row (source = 'oanda_demo_simulated') so
 // the rest of the app (dashboard, log, PNL) treats it identically to a real
 // fill.
 //
-// SL/TP are not resolved synchronously at open time — Alpha Vantage's free
-// tier has no streaming/tick feed, so "fortlaufende Prüfung" (the ongoing
-// SL/TP check) is a separate step, `checkOpenSimulatedTrades`, meant to be
-// invoked repeatedly going forward (e.g. from a scheduled trigger, or the
+// Originally used Alpha Vantage, whose free tier's 25-requests/day cap this
+// engine alone would burn through; moved to Twelve Data (800/day, 8/min)
+// for the same reason routes/twelvedata.js replaced routes/alphavantage.js
+// for historical candles.
+//
+// SL/TP are not resolved synchronously at open time — this is a REST lookup,
+// not a streaming/tick feed, so "fortlaufende Prüfung" (the ongoing SL/TP
+// check) is a separate step, `checkOpenSimulatedTrades`, meant to be invoked
+// repeatedly going forward (e.g. from a scheduled trigger, or the
 // /simulation/oanda/check endpoint) rather than a synchronous backtest replay
 // over historical bars.
 
 import { halfSpreadPrice, resolveOandaCostSymbol } from './oanda-costs.js';
 
-const ALPHA_VANTAGE_API = 'https://www.alphavantage.co/query';
+const TWELVE_DATA_API = 'https://api.twelvedata.com';
 
-// Same ETF-proxy convention as routes/alphavantage.js's INDEX_PROXIES — Alpha
-// Vantage's free tier has no raw index quote endpoint, so index instruments
-// are tracked via their standard tracking ETF. The proxy trades at a
-// different absolute scale than the real index (e.g. SPY ~= SPX/10), so the
-// simulated spread is applied at the proxy's scale, not the real index's —
-// an accepted approximation given there is no real quote source to match.
-const INDEX_QUOTE_PROXIES = { SPX500: 'SPY', NAS100: 'QQQ' };
+// Same ETF-proxy convention as routes/twelvedata.js's SYMBOL_MAP — Twelve
+// Data's free tier has no raw index quote endpoint either, so index
+// instruments are tracked via their standard tracking ETF. The proxy trades
+// at a different absolute scale than the real index (e.g. SPY ~= SPX/10), so
+// the simulated spread is applied at the proxy's scale, not the real
+// index's — an accepted approximation given there is no real quote source
+// to match.
+const TWELVE_DATA_SYMBOL_MAP = { EURUSD: 'EUR/USD', SPX500: 'SPY', NAS100: 'QQQ' };
 
 async function fetchRawPrice(symbol, env) {
-  if (!env.ALPHA_VANTAGE_API_KEY) {
-    throw new Error('alphavantage_not_configured');
+  if (!env.TWELVE_DATA_API_KEY) {
+    throw new Error('twelvedata_not_configured');
   }
 
-  const upstream = new URL(ALPHA_VANTAGE_API);
-  upstream.searchParams.set('apikey', env.ALPHA_VANTAGE_API_KEY);
+  const tdSymbol = TWELVE_DATA_SYMBOL_MAP[symbol];
+  if (!tdSymbol) throw new Error(`unsupported_symbol:${symbol}`);
 
-  if (symbol === 'EURUSD') {
-    upstream.searchParams.set('function', 'CURRENCY_EXCHANGE_RATE');
-    upstream.searchParams.set('from_currency', 'EUR');
-    upstream.searchParams.set('to_currency', 'USD');
-    const res = await fetch(upstream.toString());
-    if (!res.ok) throw new Error(`alphavantage_upstream_error:${res.status}`);
-    const data = await res.json();
-    const rate = data['Realtime Currency Exchange Rate']?.['5. Exchange Rate'];
-    const price = parseFloat(rate);
-    if (!Number.isFinite(price)) throw new Error('alphavantage_bad_response');
-    return price;
-  }
+  const upstream = new URL(`${TWELVE_DATA_API}/price`);
+  upstream.searchParams.set('symbol', tdSymbol);
+  upstream.searchParams.set('apikey', env.TWELVE_DATA_API_KEY);
 
-  const proxy = INDEX_QUOTE_PROXIES[symbol];
-  if (!proxy) throw new Error(`unsupported_symbol:${symbol}`);
-  upstream.searchParams.set('function', 'GLOBAL_QUOTE');
-  upstream.searchParams.set('symbol', proxy);
   const res = await fetch(upstream.toString());
-  if (!res.ok) throw new Error(`alphavantage_upstream_error:${res.status}`);
+  if (!res.ok) throw new Error(`twelvedata_upstream_error:${res.status}`);
   const data = await res.json();
-  const priceStr = data['Global Quote']?.['05. price'];
-  const price = parseFloat(priceStr);
-  if (!Number.isFinite(price)) throw new Error('alphavantage_bad_response');
+
+  // Twelve Data returns 200 with {"status":"error", ...} on bad/throttled
+  // requests rather than a non-2xx status, so surface that explicitly.
+  if (data.status === 'error') throw new Error(`twelvedata_api_error:${data.message ?? 'unknown'}`);
+
+  const price = parseFloat(data.price);
+  if (!Number.isFinite(price)) throw new Error('twelvedata_bad_response');
   return price;
 }
 

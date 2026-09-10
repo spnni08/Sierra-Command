@@ -1,7 +1,7 @@
 // Structural-data routes backed by D1: strategies, trades, activity log,
 // backtest runs, and per-strategy settings. All GET routes return
 // `{ data: [...] }`; the PUT route returns `{ data: {...} }`. No auth —
-// consistent with the existing read-mostly /binance, /oanda, /alphavantage
+// consistent with the existing read-mostly /binance, /oanda, /coingecko, /twelvedata
 // routes at this stage of the project.
 
 export async function handleApiRoute(request, url, env) {

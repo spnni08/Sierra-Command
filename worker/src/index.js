@@ -1,6 +1,7 @@
 import { handleBinanceRoute } from './routes/binance.js';
 import { handleOandaRoute } from './routes/oanda.js';
-import { handleAlphaVantageRoute } from './routes/alphavantage.js';
+import { handleCoinGeckoRoute } from './routes/coingecko.js';
+import { handleTwelveDataRoute } from './routes/twelvedata.js';
 import { handleApiRoute } from './routes/api.js';
 import { handleSimulationRoute } from './routes/simulation.js';
 import { handleWebhookRoute } from './routes/webhook.js';
@@ -22,8 +23,10 @@ export default {
         response = await handleBinanceRoute(request, url, env);
       } else if (url.pathname.startsWith('/oanda')) {
         response = await handleOandaRoute(request, url, env);
-      } else if (url.pathname.startsWith('/alphavantage')) {
-        response = await handleAlphaVantageRoute(request, url, env);
+      } else if (url.pathname.startsWith('/coingecko')) {
+        response = await handleCoinGeckoRoute(request, url, env);
+      } else if (url.pathname.startsWith('/twelvedata')) {
+        response = await handleTwelveDataRoute(request, url, env);
       } else if (url.pathname.startsWith('/api')) {
         response = await handleApiRoute(request, url, env);
       } else if (url.pathname.startsWith('/simulation')) {
