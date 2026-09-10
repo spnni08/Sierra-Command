@@ -30,8 +30,14 @@ Internal symbol codes are mapped to TradingView tickers in
 | ETH | `BINANCE:ETHUSDT` |
 | SOL | `BINANCE:SOLUSDT` |
 | EURUSD | `FX:EURUSD` |
-| S&P 500 | `SP:SPX` |
-| NASDAQ | `NASDAQ:NDX` |
+| S&P 500 | `OANDA:SPX500USD` |
+| NASDAQ | `OANDA:NAS100USD` |
+
+The S&P 500/NASDAQ symbols were originally `SP:SPX`/`NASDAQ:NDX` (the raw
+index feeds), which turned out not to resolve on the free embed widget in
+practice — it silently fell back to the widget's default demo symbol (Apple
+Inc) instead of erroring, so both tiles showed AAPL. Switched to TradingView's
+standard OANDA CFD-tracked index feeds, which resolve correctly.
 
 **Color-scheme note:** the app's own `CandlestickChart.jsx` (still used for
 the equity-curve line charts on Pro-Terminal and Dashboard) deliberately
