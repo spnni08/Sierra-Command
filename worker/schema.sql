@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS signals (
   score REAL NOT NULL,
   factor_state TEXT NOT NULL DEFAULT '{}', -- JSON
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','converted','rejected')),
+  -- 'fixed' = static %/R SL+TP from EXIT_CONFIG defaults (or a strategy
+  -- override); 'trailing' = the strategy's "(SL)" variant, whose SL trails
+  -- a per-strategy anchor (ATR, S&R zone, Bollinger band edge, Kumo edge, or
+  -- last HL/LH swing point — see strategies.factor_definition.trailing_anchor).
+  exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_signals_strategy_id ON signals(strategy_id);
@@ -37,6 +42,10 @@ CREATE TABLE IF NOT EXISTS trades (
   source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   pnl REAL,
+  -- Mirrors signals.exit_mode at the time this trade was opened: 'fixed'
+  -- (static SL/TP) or 'trailing' (SL trails the strategy's anchor — see
+  -- worker/src/strategies/*.js EXIT.trailing.anchor per strategy).
+  exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing')),
   opened_at TEXT NOT NULL DEFAULT (datetime('now')),
   closed_at TEXT
 );
@@ -99,20 +108,118 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp)
 CREATE INDEX IF NOT EXISTS idx_activity_log_related_trade_id ON activity_log(related_trade_id);
 
 -- Seed / test data ----------------------------------------------------------
--- Obviously-fake rows (TEST- prefixed strategy names) used to exercise the
--- /api/* routes end to end before real signal/trade generation exists.
+-- The 22 WAVESCOUT strategies (11 base + their trailing-SL "(SL)" variants),
+-- ported from spnni08/tradingview-bot worker.js STRATEGIES /
+-- CANDIDATE_SCORING_DEFAULTS and pinescript/strategies/*.pine. Each base id
+-- matches the WAVESCOUT strategy_key 1:1; the "_sl" id is the same signal
+-- logic with a trailing stop substituted for the fixed SL/TP (see
+-- worker/src/strategies/*.js EXIT.trailing.anchor for the per-strategy
+-- anchor — ATR by default, else S&R zone / Bollinger band edge / Kumo edge /
+-- last HL-LH swing point per the mapping below).
 -- Fixed IDs + INSERT OR IGNORE keep this idempotent: safe to re-run on every
 -- deploy (this file runs unconditionally in worker-deploy.yml).
 
 INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_definition, created_at, updated_at) VALUES
-  ('seed-strat-1', 'TEST-MOMENTUM', '["BTCUSDT","ETHUSDT"]', 1, '{"factors":["ema_cross","volume_spike"]}', '2026-09-01 08:00:00', '2026-09-01 08:00:00'),
-  ('seed-strat-2', 'TEST-BREAKOUT', '["SOLUSDT"]', 1, '{"factors":["range_break","volume_spike","atr_band"]}', '2026-09-01 08:05:00', '2026-09-01 08:05:00'),
-  ('seed-strat-3', 'TEST-TREND', '["EURUSD","SPX500"]', 0, '{"factors":["ema_slope"]}', '2026-09-01 08:10:00', '2026-09-01 08:10:00');
+  ('crypto_baseline', 'Crypto Baseline (RSI+EMA200)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["ema200_trend","rsi_pullback_35_65","ema_dist_sweet_spot_0.5_1.3pct","rsi_dead_zone_avoid"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:00:00', '2026-09-01 08:00:00'),
+  ('crypto_baseline_sl', 'Crypto Baseline (RSI+EMA200) (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["ema200_trend","rsi_pullback_35_65","ema_dist_sweet_spot_0.5_1.3pct","rsi_dead_zone_avoid"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:00:00', '2026-09-01 08:00:00'),
+
+  ('crypto_sr_volume', 'Crypto S&R Volume Profile', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["val_vah_bounce","ema200_trend_filter","reclaim_breakdown_trigger"],"disable_shorts":true,"cooldown_minutes":30,"trailing_anchor":"sr_zone"}',
+    '2026-09-01 08:01:00', '2026-09-01 08:01:00'),
+  ('crypto_sr_volume_sl', 'Crypto S&R Volume Profile (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["val_vah_bounce","ema200_trend_filter","reclaim_breakdown_trigger"],"disable_shorts":true,"cooldown_minutes":30,"trailing_anchor":"sr_zone"}',
+    '2026-09-01 08:01:00', '2026-09-01 08:01:00'),
+
+  ('crypto_orderflow_breakout', 'Crypto Orderflow Breakout', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["range_break_n20","volume_ratio_min_1.5x","edge_buffer_pct","ema200_trend_filter","rsi9_exhaustion_reject"],"cooldown_minutes":30,"risk_pct":0.25,"trailing_anchor":"atr"}',
+    '2026-09-01 08:02:00', '2026-09-01 08:02:00'),
+  ('crypto_orderflow_breakout_sl', 'Crypto Orderflow Breakout (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["range_break_n20","volume_ratio_min_1.5x","edge_buffer_pct","ema200_trend_filter","rsi9_exhaustion_reject"],"cooldown_minutes":30,"risk_pct":0.25,"trailing_anchor":"atr"}',
+    '2026-09-01 08:02:00', '2026-09-01 08:02:00'),
+
+  ('crypto_ichimoku_breakout', 'Crypto Ichimoku Breakout', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["kumo_breakout","adx_min_22","chikou_confirm","volume_ratio_min_1.5x","structure_regime_filter"],"cooldown_minutes":30,"trailing_anchor":"kumo_edge"}',
+    '2026-09-01 08:03:00', '2026-09-01 08:03:00'),
+  ('crypto_ichimoku_breakout_sl', 'Crypto Ichimoku Breakout (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["kumo_breakout","adx_min_22","chikou_confirm","volume_ratio_min_1.5x","structure_regime_filter"],"cooldown_minutes":30,"trailing_anchor":"kumo_edge"}',
+    '2026-09-01 08:03:00', '2026-09-01 08:03:00'),
+
+  ('crypto_sr_bollinger', 'Crypto S&R Bollinger Bounce', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bb_20_2_band_touch","ema200_trend_context"],"shorts_default_off":true,"trailing_anchor":"bollinger_band_edge"}',
+    '2026-09-01 08:04:00', '2026-09-01 08:04:00'),
+  ('crypto_sr_bollinger_sl', 'Crypto S&R Bollinger Bounce (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bb_20_2_band_touch","ema200_trend_context"],"shorts_default_off":true,"trailing_anchor":"bollinger_band_edge"}',
+    '2026-09-01 08:04:00', '2026-09-01 08:04:00'),
+
+  ('crypto_sr_exclusion', 'Crypto S&R Exclusion Filter', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["sr_zone_touch_no_volume","rsi_trend_bounce_direction","negative_score_no_atr_spike","negative_score_no_thin_volume","negative_score_rsi_not_opposite_extreme","negative_score_cooldown_elapsed"],"threshold":60,"trailing_anchor":"sr_zone"}',
+    '2026-09-01 08:05:00', '2026-09-01 08:05:00'),
+  ('crypto_sr_exclusion_sl', 'Crypto S&R Exclusion Filter (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["sr_zone_touch_no_volume","rsi_trend_bounce_direction","negative_score_no_atr_spike","negative_score_no_thin_volume","negative_score_rsi_not_opposite_extreme","negative_score_cooldown_elapsed"],"threshold":60,"trailing_anchor":"sr_zone"}',
+    '2026-09-01 08:05:00', '2026-09-01 08:05:00'),
+
+  ('crypto_ict_smc', 'Crypto ICT/SMC', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["htf_zone_touch","bos_ob_smt_min_confirmations_2"],"trailing_anchor":"swing_point"}',
+    '2026-09-01 08:06:00', '2026-09-01 08:06:00'),
+  ('crypto_ict_smc_sl', 'Crypto ICT/SMC (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["htf_zone_touch","bos_ob_smt_min_confirmations_2"],"trailing_anchor":"swing_point"}',
+    '2026-09-01 08:06:00', '2026-09-01 08:06:00'),
+
+  ('crypto_flawless_victory', 'Crypto Flawless Victory', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bb_rsi_mfi_cross_trigger","version_v1_v2_v3","optional_htf_trend_filter"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:07:00', '2026-09-01 08:07:00'),
+  ('crypto_flawless_victory_sl', 'Crypto Flawless Victory (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bb_rsi_mfi_cross_trigger","version_v1_v2_v3","optional_htf_trend_filter"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:07:00', '2026-09-01 08:07:00'),
+
+  ('crypto_mfi_engulfing', 'Crypto MFI Engulfing', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["mfi14_extreme_10_90","filtered_engulfing_pattern"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:08:00', '2026-09-01 08:08:00'),
+  ('crypto_mfi_engulfing_sl', 'Crypto MFI Engulfing (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["mfi14_extreme_10_90","filtered_engulfing_pattern"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:08:00', '2026-09-01 08:08:00'),
+
+  ('crypto_holy_grail_adx_sma_bb', 'Crypto Holy Grail ADX/SMA/BB', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["adx14_min_25_trending","sma20_bb_0.25_pullback_zone","candle_pattern_hammer_engulfing_doji"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:09:00', '2026-09-01 08:09:00'),
+  ('crypto_holy_grail_adx_sma_bb_sl', 'Crypto Holy Grail ADX/SMA/BB (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["adx14_min_25_trending","sma20_bb_0.25_pullback_zone","candle_pattern_hammer_engulfing_doji"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:09:00', '2026-09-01 08:09:00'),
+
+  ('crypto_bb_rsi_trendfilter', 'Crypto BB Trendfilter RSI', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bb200_0.2_trend_filter","rsi3_cross_80_20"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:10:00', '2026-09-01 08:10:00'),
+  ('crypto_bb_rsi_trendfilter_sl', 'Crypto BB Trendfilter RSI (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bb200_0.2_trend_filter","rsi3_cross_80_20"],"trailing_anchor":"atr"}',
+    '2026-09-01 08:10:00', '2026-09-01 08:10:00');
 
 INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold) VALUES
-  ('seed-strat-1', 0.8, '["eu","us"]', 0.85, 0.5),
-  ('seed-strat-2', 1.0, '[]', 0.75, 0.6),
-  ('seed-strat-3', 0.5, '["eu"]', 0.9, 0.3);
+  ('crypto_baseline', 1.0, '[]', 0.7, 0.5),
+  ('crypto_baseline_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_volume', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_volume_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_orderflow_breakout', 0.25, '[]', 0.7, 0.5),
+  ('crypto_orderflow_breakout_sl', 0.25, '[]', 0.7, 0.5),
+  ('crypto_ichimoku_breakout', 1.0, '[]', 0.7, 0.5),
+  ('crypto_ichimoku_breakout_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_bollinger', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_bollinger_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_exclusion', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_exclusion_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_ict_smc', 1.0, '[]', 0.7, 0.5),
+  ('crypto_ict_smc_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_flawless_victory', 1.0, '[]', 0.7, 0.5),
+  ('crypto_flawless_victory_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_mfi_engulfing', 1.0, '[]', 0.7, 0.5),
+  ('crypto_mfi_engulfing_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_holy_grail_adx_sma_bb', 1.0, '[]', 0.7, 0.5),
+  ('crypto_holy_grail_adx_sma_bb_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_bb_rsi_trendfilter', 1.0, '[]', 0.7, 0.5),
+  ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5);
 
 INSERT OR IGNORE INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, opened_at, closed_at) VALUES
   ('seed-trade-1', NULL, 'BTCUSDT', 'long', 64310.00, 63720.00, 66150.00, 0.40, 'binance_testnet', 'open', 200.80, '2026-09-09 11:31:00', NULL),
@@ -147,6 +254,6 @@ INSERT OR IGNORE INTO activity_log (id, source, message, timestamp, related_trad
   ('seed-log-20', 'system', 'Engine-Neustart nach Daten-Feed-Timeout (3s)', '2026-09-07 06:15:07', NULL);
 
 INSERT OR IGNORE INTO backtest_runs (id, strategy_id, symbol, timeframe_start, timeframe_end, sharpe, sortino, max_drawdown, profit_factor, out_of_sample_deviation, created_at) VALUES
-  ('seed-bt-1', 'seed-strat-1', 'BTCUSDT', '2024-09-01', '2026-09-01', 1.38, 2.04, -0.094, 1.74, -0.112, '2026-09-02 09:00:00'),
-  ('seed-bt-2', 'seed-strat-2', 'SOLUSDT', '2024-09-01', '2026-09-01', 1.61, 2.21, -0.078, 1.91, -0.084, '2026-09-02 09:05:00'),
-  ('seed-bt-3', 'seed-strat-3', 'SPX500', '2024-09-01', '2026-09-01', 0.92, 1.30, -0.132, 1.28, -0.145, '2026-09-02 09:10:00');
+  ('seed-bt-1', 'crypto_baseline', 'BTCUSDT', '2024-09-01', '2026-09-01', 1.38, 2.04, -0.094, 1.74, -0.112, '2026-09-02 09:00:00'),
+  ('seed-bt-2', 'crypto_orderflow_breakout', 'SOLUSDT', '2024-09-01', '2026-09-01', 1.61, 2.21, -0.078, 1.91, -0.084, '2026-09-02 09:05:00'),
+  ('seed-bt-3', 'crypto_ict_smc', 'ETHUSDT', '2024-09-01', '2026-09-01', 0.92, 1.30, -0.132, 1.28, -0.145, '2026-09-02 09:10:00');
