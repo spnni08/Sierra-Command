@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS strategy_settings (
 -- this file), so no migration of existing rows is needed here.
 CREATE TABLE IF NOT EXISTS api_credentials (
   id TEXT PRIMARY KEY,
-  provider TEXT NOT NULL CHECK (provider IN ('binance','oanda')),
+  provider TEXT NOT NULL CHECK (provider IN ('binance','oanda','alphavantage')),
   env TEXT NOT NULL CHECK (env IN ('demo','live')),
   encrypted_key TEXT NOT NULL,
   encrypted_secret TEXT NOT NULL,
