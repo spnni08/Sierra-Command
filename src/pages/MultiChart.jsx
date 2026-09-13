@@ -30,15 +30,19 @@ function ChartTile({ tile }) {
       <div style={{ flex: 1, minHeight: 0, background: 'var(--chart)' }}>
         <TradingViewWidget symbol={tile.sym} interval={tile.tf} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderTop: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt2)' }}>
+      {/* Factor dots/strategy/confidence are still design-mockup numbers —
+          no per-tile factor-analytics engine exists yet (same status as
+          Strategie-Matrix/Faktor-Auslastung below, see PR #24's docs).
+          Dimmed + labeled MOCK rather than looking like live signal state. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderTop: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: 'var(--txt3)', opacity: 0.55 }}>
         <div style={{ display: 'flex', gap: 2 }}>
           {Array.from({ length: 7 }).map((_, i) => (
-            <div key={i} style={{ width: 9, height: 9, background: i < tile.factors ? 'var(--acc)' : 'transparent', border: i < tile.factors ? 'none' : '1px solid var(--line2)' }} />
+            <div key={i} style={{ width: 9, height: 9, background: i < tile.factors ? 'var(--txt3)' : 'transparent', border: i < tile.factors ? 'none' : '1px solid var(--line2)' }} />
           ))}
         </div>
         <div>{tile.strategy}</div>
         <div style={{ flex: 1 }} />
-        <div style={{ color: 'var(--txt)' }}>KONF {tile.conf}%</div>
+        <div>KONF {tile.conf}% · MOCK</div>
       </div>
     </div>
   );
@@ -72,28 +76,37 @@ export default function MultiChart() {
             ))}
           </div>
 
-          <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Strategie-Matrix</div>
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
+          {/* Strategie-Matrix and Faktor-Auslastung have no real analytics
+              engine behind them yet (per-factor signal analytics across
+              strategies — see PR #24's docs on this gap). Dimmed and
+              labeled "noch nicht verfügbar" rather than presented as live
+              numbers; left in place as a preview of the intended layout. */}
+          <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>
+            Strategie-Matrix <span style={{ color: 'var(--txt3)', textTransform: 'none', letterSpacing: 0 }}>· noch nicht verfügbar</span>
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, opacity: 0.5 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 44px', padding: '4px 9px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)' }}>
               <div>STRATEGIE</div><div style={{ textAlign: 'right' }}>FAKT.</div><div style={{ textAlign: 'right' }}>SIG.</div><div style={{ textAlign: 'right' }}>TREFF.</div>
             </div>
             {STRATEGY_MATRIX.map(row => (
               <div key={row.name} style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 44px', padding: '5px 9px', borderBottom: '1px solid var(--line)' }}>
-                <div style={{ color: 'var(--txt)' }}>{row.name}</div>
-                <div style={{ textAlign: 'right', color: row.hot ? 'var(--acc)' : 'var(--txt2)' }}>{row.factor}</div>
+                <div style={{ color: 'var(--txt2)' }}>{row.name}</div>
+                <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{row.factor}</div>
                 <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{row.sig}</div>
                 <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{row.hit}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', borderTop: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Faktor-Auslastung</div>
-          <div style={{ padding: '8px 9px', display: 'flex', flexDirection: 'column', gap: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
+          <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', borderTop: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>
+            Faktor-Auslastung <span style={{ color: 'var(--txt3)', textTransform: 'none', letterSpacing: 0 }}>· noch nicht verfügbar</span>
+          </div>
+          <div style={{ padding: '8px 9px', display: 'flex', flexDirection: 'column', gap: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, opacity: 0.5 }}>
             {FACTOR_UTIL.map(f => (
               <div key={f.label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <div style={{ width: 96, color: 'var(--txt2)' }}>{f.label}</div>
-                <div style={{ flex: 1, height: 7, background: 'var(--panel3)' }}><div style={{ width: f.pct + '%', height: '100%', background: 'var(--acc)' }} /></div>
-                <div style={{ width: 26, textAlign: 'right' }}>{f.pct}</div>
+                <div style={{ flex: 1, height: 7, background: 'var(--panel3)' }}><div style={{ width: f.pct + '%', height: '100%', background: 'var(--txt3)' }} /></div>
+                <div style={{ width: 26, textAlign: 'right', color: 'var(--txt2)' }}>{f.pct}</div>
               </div>
             ))}
           </div>

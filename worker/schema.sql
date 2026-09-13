@@ -138,6 +138,17 @@ DELETE FROM backtest_runs WHERE strategy_id IN ('seed-strat-1', 'seed-strat-2', 
 DELETE FROM strategy_settings WHERE strategy_id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
 DELETE FROM strategies WHERE id IN ('seed-strat-1', 'seed-strat-2', 'seed-strat-3');
 
+-- seed-bt-1/2/3 were fabricated backtest_runs rows carrying the original
+-- design mockup's exact numbers (sharpe 1.38/profit_factor 1.74/max_drawdown
+-- -9.4% for crypto_baseline, etc.) — indistinguishable from a real result in
+-- the UI once the real backtest engine shipped (PR #31), since the
+-- Dashboard's strategy-stats table just reads "latest backtest_runs row per
+-- strategy" and these were the only row some strategies had. Purged
+-- unconditionally on every deploy, same pattern as the TEST-* strategies
+-- above — a real run (see worker/src/backtest/) is the only way a strategy
+-- gets a stats row from here on.
+DELETE FROM backtest_runs WHERE id IN ('seed-bt-1', 'seed-bt-2', 'seed-bt-3');
+
 INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_definition, created_at, updated_at) VALUES
   ('crypto_baseline', 'Crypto Baseline (RSI+EMA200)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
     '{"factors":["ema200_trend","rsi_pullback_35_65","ema_dist_sweet_spot_0.5_1.3pct","rsi_dead_zone_avoid"],"trailing_anchor":"atr"}',
@@ -272,7 +283,5 @@ INSERT OR IGNORE INTO activity_log (id, source, message, timestamp, related_trad
   ('seed-log-19', 'binance', 'SOL/USD Short 8 eroeffnet - TEST-BREAKOUT', '2026-09-07 06:44:20', NULL),
   ('seed-log-20', 'system', 'Engine-Neustart nach Daten-Feed-Timeout (3s)', '2026-09-07 06:15:07', NULL);
 
-INSERT OR IGNORE INTO backtest_runs (id, strategy_id, symbol, timeframe_start, timeframe_end, sharpe, sortino, max_drawdown, profit_factor, out_of_sample_deviation, created_at) VALUES
-  ('seed-bt-1', 'crypto_baseline', 'BTCUSDT', '2024-09-01', '2026-09-01', 1.38, 2.04, -0.094, 1.74, -0.112, '2026-09-02 09:00:00'),
-  ('seed-bt-2', 'crypto_orderflow_breakout', 'SOLUSDT', '2024-09-01', '2026-09-01', 1.61, 2.21, -0.078, 1.91, -0.084, '2026-09-02 09:05:00'),
-  ('seed-bt-3', 'crypto_ict_smc', 'ETHUSDT', '2024-09-01', '2026-09-01', 0.92, 1.30, -0.132, 1.28, -0.145, '2026-09-02 09:10:00');
+-- No seed backtest_runs rows here on purpose — see the DELETE above. A
+-- strategy's stats only ever come from a real /backtest/run result now.

@@ -66,9 +66,18 @@ function fmtOpenDuration(openedAt) {
   return hrs.toFixed(2).replace('.', ',') + ' h';
 }
 
+// The rest of the app (strategy asset_classes, backtest symbols, the
+// symbol tile bar) consistently uses no-separator symbols (EURUSD,
+// BTCUSDT, SPX500). Some seeded/real trades rows carry EUR_USD instead —
+// normalized for display only, not rewritten in the DB, since that's a
+// display-layer inconsistency, not a trade-identity change.
+function normalizeSymbol(sym) {
+  return String(sym ?? '').replace(/_/g, '');
+}
+
 function toOpenTradeRow(t) {
   return {
-    symbol: t.symbol,
+    symbol: normalizeSymbol(t.symbol),
     dir: t.direction === 'long' ? 'LONG' : 'SHORT',
     vol: fmtEntryNum(t.volume, 2),
     entry: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
@@ -253,7 +262,15 @@ export default function ProTerminal() {
               </div>
             )}
             <div style={{ flex: 1 }} />
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>{activeTile.strategy.split(' · ')[0]} · AKTIV</div>
+            {/* Was a static "MOMENTUM-M7 · AKTIV" mock badge unrelated to any
+                real active strategy — replaced with the strategy actually
+                selected in the Backtest panel below (real state), or
+                dropped entirely once no backtestable strategy has loaded. */}
+            {effectiveStrategyId && (
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>
+                BACKTEST: {backtestableStrategies.find(s => s.id === effectiveStrategyId)?.name ?? effectiveStrategyId}
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, minHeight: 0, background: 'var(--chart)' }}>
             <TradingViewWidget symbol={activeSym} interval={activeTf} />
