@@ -1,11 +1,52 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import TradingViewWidget from '../components/TradingViewWidget';
-import CandlestickChart from '../components/CandlestickChart';
 import { STRATEGY_SUGGESTIONS, SIGNAL_FACTORS, MULTI_CHART_TILES } from '../data/mockData';
-import { fetchBacktestRuns, fetchTrades } from '../api/client';
+import { fetchBacktestRuns, fetchStrategies, fetchTrades, runBacktest } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
+
+// Strategy IDs with a real or partial indicator adapter in
+// worker/src/backtest/adapters.js — only these can actually produce a
+// backtest today (see that file's header comment for exactly why the other
+// 5 base strategies can't). There's no API endpoint exposing this yet, so
+// it's mirrored here by hand; keep in sync with adapters.js's ADAPTERS map
+// whenever a new adapter is added.
+const BACKTESTABLE_STRATEGY_IDS = new Set([
+  'crypto_baseline', 'crypto_baseline_sl',
+  'crypto_bb_rsi_trendfilter', 'crypto_bb_rsi_trendfilter_sl',
+  'crypto_orderflow_breakout', 'crypto_orderflow_breakout_sl',
+  'crypto_ichimoku_breakout', 'crypto_ichimoku_breakout_sl',
+  'crypto_sr_exclusion', 'crypto_sr_exclusion_sl',
+  'crypto_sr_bollinger', 'crypto_sr_bollinger_sl', // partial adapter — flagged via the run response's partialAdapter field, not here
+]);
+
+// All backtestable strategies are crypto-only today (see adapters.js), and
+// the backtest engine only knows these three crypto symbols (candles.js).
+const BACKTEST_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+
+function describeBacktestError(body) {
+  const message = body?.message || '';
+  if (body?.error === 'no_indicator_adapter') {
+    return `Für diese Strategie ist noch kein Indikator-Adapter vorhanden — Backtesting ist dafür (noch) nicht möglich. ${message}`;
+  }
+  if (body?.error === 'candle_fetch_failed') {
+    if (message.includes('coingecko_upstream_error:403')) {
+      return 'CoinGecko hat die Anfrage blockiert (403) — API-Key-Problem auf Worker-Seite.';
+    }
+    if (message.includes('401') || message.toLowerCase().includes('exceeds the allowed time range')) {
+      return 'CoinGecko-Datenlimit überschritten (Free-Tier: max. 365 Tage Historie).';
+    }
+    return `Kerzendaten konnten nicht geladen werden: ${message}`;
+  }
+  if (body?.error === 'insufficient_candle_history') {
+    return message || 'Nicht genug Kerzenhistorie für den Indikator-Warmup.';
+  }
+  if (body?.error === 'unknown_strategy') {
+    return 'Unbekannte Strategie-ID.';
+  }
+  return message || body?.error || 'Backtest fehlgeschlagen.';
+}
 
 function fmtEntryNum(v, dec = 2) {
   if (v === null || v === undefined) return '—';
@@ -90,6 +131,49 @@ function fmtSignedPct(v) {
   return (v >= 0 ? '+' : '') + s + '%';
 }
 
+// Net profit isn't a field the engine stores on backtest_runs — it's the
+// straightforward sum of a run's own trade PnLs, so it's computed here from
+// the just-run response's `trades` array rather than shown as unavailable.
+function fmtSignedNetProfit(trades) {
+  const sum = trades.reduce((a, t) => a + (Number.isFinite(t.pnl) ? t.pnl : 0), 0);
+  return (sum >= 0 ? '+' : '−') + Math.abs(sum).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Chance-Risk-Verhältnis (avg win / avg loss) — also not computed by the
+// engine, derived client-side from the run's own trades. "—" when there's
+// no losing trade to divide by (undefined ratio) rather than a fake number.
+function fmtCrv(trades) {
+  const wins = trades.filter((t) => t.pnl > 0).map((t) => t.pnl);
+  const losses = trades.filter((t) => t.pnl <= 0).map((t) => Math.abs(t.pnl));
+  if (wins.length === 0 || losses.length === 0) return '—';
+  const avgWin = wins.reduce((a, b) => a + b, 0) / wins.length;
+  const avgLoss = losses.reduce((a, b) => a + b, 0) / losses.length;
+  if (avgLoss === 0) return '—';
+  return (avgWin / avgLoss).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Minimal real equity curve (no mock data generator) — cumulative PnL over
+// the run's own trades, same startingEquity convention as metrics.js.
+function EquityCurve({ trades, startingEquity = 10000 }) {
+  const points = trades.reduce(
+    (acc, t) => [...acc, acc[acc.length - 1] + (Number.isFinite(t.pnl) ? t.pnl : 0)],
+    [startingEquity]
+  );
+  const min = Math.min(...points), max = Math.max(...points);
+  const pad = (max - min) * 0.1 || 1;
+  const lo = min - pad, hi = max + pad;
+  const w = 100, h = 100;
+  const path = points
+    .map((v, i) => `${i === 0 ? 'M' : 'L'} ${(i / (points.length - 1)) * w} ${h - ((v - lo) / (hi - lo)) * h}`)
+    .join(' ');
+  const up = points[points.length - 1] >= points[0];
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+      <path d={path} fill="none" stroke={up ? 'var(--pos, #16a34a)' : 'var(--acc)'} strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
 export default function ProTerminal() {
   const { dense } = useApp();
   const [activeSym, setActiveSym] = useState('BTCUSD');
@@ -106,7 +190,44 @@ export default function ProTerminal() {
 
   const loadBacktests = useCallback(() => fetchBacktestRuns(), []);
   const backtestQ = useFetch(loadBacktests, [loadBacktests]);
-  const latestBacktest = (backtestQ.data && backtestQ.data[0]) || null;
+  const latestStoredBacktest = (backtestQ.data && backtestQ.data[0]) || null;
+
+  const loadStrategies = useCallback(() => fetchStrategies(), []);
+  const strategiesQ = useFetch(loadStrategies, [loadStrategies]);
+  const allStrategies = strategiesQ.data || [];
+  const backtestableStrategies = allStrategies.filter(s => BACKTESTABLE_STRATEGY_IDS.has(s.id));
+  const nonBacktestableStrategies = allStrategies.filter(s => !BACKTESTABLE_STRATEGY_IDS.has(s.id));
+
+  const [btStrategyId, setBtStrategyId] = useState('');
+  const [btSymbol, setBtSymbol] = useState(BACKTEST_SYMBOLS[0]);
+  const [btLoading, setBtLoading] = useState(false);
+  const [btResult, setBtResult] = useState(null); // { data } on success, { error, message, ... } on a known failure
+  const [btNetworkError, setBtNetworkError] = useState(null); // transport-level failure (worker unreachable)
+
+  const effectiveStrategyId = btStrategyId || backtestableStrategies[0]?.id || '';
+  const selectedIsBacktestable = BACKTESTABLE_STRATEGY_IDS.has(effectiveStrategyId);
+
+  const handleRunBacktest = useCallback(async () => {
+    if (!effectiveStrategyId) return;
+    setBtLoading(true);
+    setBtNetworkError(null);
+    setBtResult(null);
+    try {
+      const body = await runBacktest(effectiveStrategyId, btSymbol);
+      setBtResult(body);
+    } catch (err) {
+      setBtNetworkError(err);
+    } finally {
+      setBtLoading(false);
+    }
+  }, [effectiveStrategyId, btSymbol]);
+
+  const manualRun = btResult?.data ?? null;
+  // The metrics panel prefers a just-run result over the last stored run so
+  // the UI reflects what the user actually triggered; falls back to the
+  // latest persisted backtest_runs row when nothing's been run this session.
+  const displayedBacktest = manualRun?.run ?? latestStoredBacktest;
+  const displayedMetrics = manualRun?.metrics ?? null;
 
   return (
     <div style={{ height: '100%', display: 'grid', gridTemplateColumns: dense ? '1fr 340px' : '1fr 300px', gap: 1, background: 'var(--line)', minHeight: 0 }}>
@@ -179,25 +300,102 @@ export default function ProTerminal() {
       </div>
 
       <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-        <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Backtest · MOMENTUM-M7 · 24 Monate</div>
-        <StatusPanel loading={backtestQ.loading} error={backtestQ.error} onRetry={backtestQ.reload} />
-        {!backtestQ.loading && !backtestQ.error && (
+        <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Backtest</div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 9px', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
+          <select
+            value={effectiveStrategyId}
+            onChange={(e) => setBtStrategyId(e.target.value)}
+            disabled={strategiesQ.loading}
+            style={{ background: 'var(--panel3)', border: '1px solid var(--line2)', color: 'var(--txt)', fontFamily: 'inherit', fontSize: 10, padding: '4px 6px' }}
+          >
+            {backtestableStrategies.length === 0 && <option value="">— keine Strategien geladen —</option>}
+            {backtestableStrategies.map((s) => (
+              <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
+            ))}
+            {nonBacktestableStrategies.length > 0 && (
+              <optgroup label="Noch kein Adapter — Backtest nicht möglich">
+                {nonBacktestableStrategies.map((s) => (
+                  <option key={s.id} value={s.id} disabled>{s.name} ({s.id})</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select
+              value={btSymbol}
+              onChange={(e) => setBtSymbol(e.target.value)}
+              style={{ flex: 1, background: 'var(--panel3)', border: '1px solid var(--line2)', color: 'var(--txt)', fontFamily: 'inherit', fontSize: 10, padding: '4px 6px' }}
+            >
+              {BACKTEST_SYMBOLS.map((sym) => <option key={sym} value={sym}>{sym}</option>)}
+            </select>
+            <button
+              onClick={handleRunBacktest}
+              disabled={btLoading || !selectedIsBacktestable || !effectiveStrategyId}
+              style={{
+                flex: 1, fontFamily: 'inherit', fontSize: 10, padding: '4px 10px', letterSpacing: '0.06em', cursor: btLoading || !selectedIsBacktestable ? 'not-allowed' : 'pointer',
+                background: 'var(--acc)', border: 0, color: '#fff', opacity: btLoading || !selectedIsBacktestable ? 0.5 : 1,
+              }}
+            >
+              {btLoading ? 'LÄUFT…' : 'BACKTEST STARTEN'}
+            </button>
+          </div>
+
+          {!selectedIsBacktestable && effectiveStrategyId && (
+            <div style={{ color: 'var(--txt3)' }}>Für diese Strategie ist noch kein Indikator-Adapter vorhanden — Backtesting ist dafür (noch) nicht möglich.</div>
+          )}
+        </div>
+
+        {btLoading && (
+          <div style={{ padding: '14px 9px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--txt2)' }}>
+            Lade Kerzendaten und werte Strategie aus…
+          </div>
+        )}
+        {!btLoading && btNetworkError && (
+          <div style={{ padding: '14px 9px', display: 'flex', alignItems: 'center', gap: 10, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--acc)' }}>
+            <div>Worker nicht erreichbar · {btNetworkError.message}</div>
+          </div>
+        )}
+        {!btLoading && !btNetworkError && btResult?.error && (
+          <div style={{ padding: '10px 9px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--acc)', borderBottom: '1px solid var(--line)' }}>
+            {describeBacktestError(btResult)}
+          </div>
+        )}
+        {!btLoading && manualRun?.partialAdapter && (
+          <div style={{ padding: '10px 9px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
+            ⚠ Vereinfachter Adapter: {manualRun.partialAdapter}
+          </div>
+        )}
+        {!btLoading && manualRun?.window?.apiLimited && (
+          <div style={{ padding: '10px 9px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
+            ⚠ Zeitraum wurde auf CoinGeckos 365-Tage-Historienlimit begrenzt.
+          </div>
+        )}
+
+        <StatusPanel loading={backtestQ.loading && !manualRun} error={!manualRun ? backtestQ.error : null} onRetry={backtestQ.reload} />
+        {!btLoading && (backtestQ.data || manualRun) && !(backtestQ.error && !manualRun) && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--line)', borderBottom: '1px solid var(--line)' }}>
-          {metricBox('PROFIT-FAKTOR', fmtNum(latestBacktest?.profit_factor))}
-          {metricBox('MAX. DRAWDOWN', latestBacktest ? '−' + fmtPct(Math.abs(latestBacktest.max_drawdown)) : '—', true)}
-          {metricBox('SHARPE', fmtNum(latestBacktest?.sharpe))}
-          {metricBox('SORTINO', fmtNum(latestBacktest?.sortino))}
+          {metricBox('NETTOGEWINN', displayedMetrics && manualRun.trades ? fmtSignedNetProfit(manualRun.trades) : '—')}
+          {metricBox('PROFIT-FAKTOR', fmtNum(displayedMetrics ? displayedMetrics.profitFactor : displayedBacktest?.profit_factor))}
+          {metricBox('MAX. DRAWDOWN', displayedBacktest ? (displayedMetrics ? fmtSignedPct(displayedMetrics.maxDrawdown) : '−' + fmtPct(Math.abs(displayedBacktest.max_drawdown))) : '—', true)}
+          {metricBox('TREFFERQUOTE', fmtPct(displayedMetrics ? displayedMetrics.winRate : displayedBacktest?.win_rate))}
+          {metricBox('SHARPE', fmtNum(displayedMetrics ? displayedMetrics.sharpe : displayedBacktest?.sharpe))}
+          {metricBox('SORTINO', fmtNum(displayedMetrics ? displayedMetrics.sortino : displayedBacktest?.sortino))}
+          {metricBox('CRV', manualRun?.trades ? fmtCrv(manualRun.trades) : '—')}
+          {metricBox('OUT-OF-SAMPLE-ABW.', displayedBacktest?.out_of_sample_deviation != null ? fmtPct(displayedBacktest.out_of_sample_deviation) : '—')}
         </div>
         )}
 
-        {dense && !backtestQ.loading && !backtestQ.error && (
+        {!btLoading && (backtestQ.data || manualRun) && (
           <>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, borderBottom: '1px solid var(--line)' }}>
               {[
-                ['Symbol', latestBacktest?.symbol ?? '—'],
-                ['Zeitraum', latestBacktest ? `${latestBacktest.timeframe_start} – ${latestBacktest.timeframe_end}` : '—'],
-                ['Sharpe / Sortino', `${fmtNum(latestBacktest?.sharpe)} / ${fmtNum(latestBacktest?.sortino)}`],
-                ['Out-of-Sample-Abweichung', latestBacktest ? fmtPct(latestBacktest.out_of_sample_deviation) : '—'],
+                ['Strategie', displayedBacktest?.strategy_id ?? '—'],
+                ['Symbol', displayedBacktest?.symbol ?? '—'],
+                ['Zeitraum', displayedBacktest ? `${displayedBacktest.timeframe_start} – ${displayedBacktest.timeframe_end}` : '—'],
+                ['Kerzen ausgewertet', manualRun?.candleCount ?? '—'],
+                ['Anzahl Trades', displayedMetrics ? displayedMetrics.tradeCount : (displayedBacktest?.trade_count ?? '—')],
               ].map(([l, v], i, arr) => (
                 <div key={l} style={{ display: 'flex', padding: '4px 9px', borderBottom: i < arr.length - 1 ? '1px solid var(--line)' : 'none' }}>
                   <div style={{ flex: 1, color: 'var(--txt2)' }}>{l}</div><div>{v}</div>
@@ -207,7 +405,13 @@ export default function ProTerminal() {
 
             <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Equity-Kurve (Backtest)</div>
             <div style={{ height: 96, background: 'var(--chart)', borderBottom: '1px solid var(--line)' }}>
-              <CandlestickChart symbol="BTEQ" kind="line" n={180} />
+              {manualRun?.trades?.length > 0 ? (
+                <EquityCurve trades={manualRun.trades} />
+              ) : (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>
+                  {manualRun ? 'Keine Trades im Zeitraum' : 'Noch kein Backtest in dieser Sitzung gelaufen'}
+                </div>
+              )}
             </div>
           </>
         )}
