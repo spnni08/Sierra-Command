@@ -23,6 +23,10 @@ export async function handleApiRoute(request, url, env) {
     return getBacktestRuns(url, env);
   }
 
+  if (path === '/strategy-logic-versions' && request.method === 'GET') {
+    return getStrategyLogicVersions(env);
+  }
+
   if (path === '/pnl-calendar' && request.method === 'GET') {
     return getPnlCalendar(url, env);
   }
@@ -140,6 +144,22 @@ async function getBacktestRuns(url, env) {
       stmt = env.DB.prepare('SELECT * FROM backtest_runs ORDER BY created_at DESC');
     }
     const { results } = await stmt.all();
+    return Response.json({ data: results });
+  } catch (err) {
+    return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
+  }
+}
+
+// Exposes strategy_logic_versions as-is: strategy_id, logic_hash,
+// updated_at, last_invalidated_at. The frontend uses last_invalidated_at to
+// tell "logic changed since the last backtest — please re-run" apart from
+// "never backtested" when a strategy has zero backtest_runs — see
+// schema.sql's comment on this table and
+// worker/scripts/generate-logic-invalidation-sql.mjs, which is what
+// actually populates it on every deploy.
+async function getStrategyLogicVersions(env) {
+  try {
+    const { results } = await env.DB.prepare('SELECT * FROM strategy_logic_versions').all();
     return Response.json({ data: results });
   } catch (err) {
     return Response.json({ error: 'db_error', message: err.message }, { status: 500 });

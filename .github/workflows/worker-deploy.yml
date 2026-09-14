@@ -119,6 +119,21 @@ jobs:
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # Re-derives every strategy's logic hash straight from the current
+      # backtest/adapters.js source and applies it as one idempotent SQL
+      # file — see worker/scripts/generate-logic-invalidation-sql.mjs and
+      # schema.sql's strategy_logic_versions comment. Only a strategy whose
+      # adapter function actually changed gets its backtest_runs (and their
+      # backtest_session_breakdown rows) deleted; strategy_settings (risk,
+      # session filter, correlation limit) is a separate table this never
+      # reads, so tuning those never triggers this. Runs after the schema/
+      # column migrations above (needs strategy_logic_versions to exist).
+      - name: Invalidate backtest_runs for strategies whose logic changed
+        run: |
+          node scripts/generate-logic-invalidation-sql.mjs > /tmp/logic-invalidation.sql
+          npx wrangler d1 execute sierra-command-db --remote --file=/tmp/logic-invalidation.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Sync Binance Testnet secrets (skipped until repo secrets exist)
         run: |
           if [ -n "$BINANCE_TESTNET_API_KEY" ]; then
