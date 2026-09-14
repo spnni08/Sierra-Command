@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "vitest run",
     "db:migrate:local": "wrangler d1 execute sierra-command-db --local --file=./schema.sql",
     "db:migrate:remote": "wrangler d1 execute sierra-command-db --remote --file=./schema.sql"
   },
   "devDependencies": {
+    "vitest": "^2.1.9",
     "wrangler": "^4.130.0"
   }
 }
