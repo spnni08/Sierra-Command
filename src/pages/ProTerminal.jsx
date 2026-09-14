@@ -97,6 +97,22 @@ function fmtNum(v, dec = 2) {
   if (v === null || v === undefined) return '—';
   return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
+function fmtSignedNum(v) {
+  if (v === null || v === undefined) return '—';
+  return (v >= 0 ? '+' : '−') + Math.abs(v).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Display order for the session-breakdown table — matches
+// worker/src/backtest/sessions.js's SESSION_WINDOWS keys. Overlap is shown
+// last and labeled as such since it's an informational subset of
+// London+New York, not a fourth additive bucket: total trades ===
+// asia + london + new_york - overlap (see that file's header for why).
+const SESSION_BREAKDOWN_ROWS = [
+  { key: 'asia', label: 'Asia' },
+  { key: 'london', label: 'London' },
+  { key: 'new_york', label: 'New York' },
+  { key: 'overlap', label: 'Overlap (London/NY)' },
+];
 
 const TF = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
 
@@ -427,6 +443,39 @@ export default function ProTerminal() {
               ) : (
                 <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>
                   {manualRun ? 'Keine Trades im Zeitraum' : 'Noch kein Backtest in dieser Sitzung gelaufen'}
+                </div>
+              )}
+            </div>
+
+            {/* Session-breakdown axis alongside winrate/overall and asset-fit:
+                which strategy performs how in which trading session. Only
+                real numbers for a just-run, backtestable strategy — a
+                stored/older run has no sessionBreakdown persisted-and-refetched
+                here yet (POST /backtest/run returns it, GET /backtest-runs
+                list rows don't join it), so that case (and any
+                non-backtestable selection) falls back to the same "—" /
+                "noch nicht verfügbar" placeholder pattern used above for
+                out-of-sample deviation etc. Overlap is NOT additive with the
+                other three — see worker/src/backtest/sessions.js. */}
+            <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Session-Auswertung</div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, borderBottom: '1px solid var(--line)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 56px 64px 72px', padding: '4px 9px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)' }}>
+                <div>SESSION</div><div style={{ textAlign: 'right' }}>TRADES</div><div style={{ textAlign: 'right' }}>QUOTE</div><div style={{ textAlign: 'right' }}>P/L</div>
+              </div>
+              {SESSION_BREAKDOWN_ROWS.map(({ key, label }, i, arr) => {
+                const bucket = manualRun?.sessionBreakdown?.[key];
+                return (
+                  <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 56px 64px 72px', padding: '4px 9px', borderBottom: i < arr.length - 1 ? '1px solid var(--line)' : 'none' }}>
+                    <div style={{ color: 'var(--txt2)' }}>{label}</div>
+                    <div style={{ textAlign: 'right' }}>{bucket ? bucket.trades : '—'}</div>
+                    <div style={{ textAlign: 'right' }}>{bucket ? fmtPct(bucket.winRate) : '—'}</div>
+                    <div style={{ textAlign: 'right' }}>{bucket ? fmtSignedNum(bucket.netPnl) : '—'}</div>
+                  </div>
+                );
+              })}
+              {!manualRun?.sessionBreakdown && (
+                <div style={{ padding: '4px 9px', color: 'var(--txt3)' }}>
+                  {selectedIsBacktestable ? 'Session-Auswertung: noch nicht verfügbar — Backtest oben starten.' : 'Session-Auswertung noch nicht verfügbar.'}
                 </div>
               )}
             </div>

@@ -13,6 +13,7 @@ import { getAdapter, PARTIAL_ADAPTERS } from './adapters.js';
 import { fetchHistoricalCandles, assetClassFor } from './candles.js';
 import { resolveWindow } from './window.js';
 import { computeMetrics } from './metrics.js';
+import { computeSessionBreakdown } from './sessions.js';
 import { atr as computeAtr } from './indicators.js';
 import { halfSpreadPrice as oandaHalfSpread } from '../simulation/oanda-costs.js';
 import { halfSpreadPrice as cryptoHalfSpread, takerFee as cryptoTakerFee } from '../simulation/crypto-costs.js';
@@ -196,6 +197,11 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
   }
 
   const metrics = computeMetrics(trades);
+  // Tag each trade by its entry (open) timestamp — same convention as the
+  // trades[] shape returned below (openedAt = candles[openIndex].timestamp).
+  const sessionBreakdown = computeSessionBreakdown(
+    trades.map((t) => ({ openedAt: candles[t.openIndex]?.timestamp, pnl: t.pnl }))
+  );
 
   const id = makeId('bt');
   const createdAt = nowSql();
@@ -222,10 +228,20 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
     )
     .run();
 
+  for (const bucket of Object.values(sessionBreakdown)) {
+    await env.DB.prepare(
+      `INSERT INTO backtest_session_breakdown (backtest_run_id, session, trade_count, win_rate, net_pnl)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+      .bind(id, bucket.session, bucket.trades, bucket.winRate, bucket.netPnl)
+      .run();
+  }
+
   const run = await env.DB.prepare('SELECT * FROM backtest_runs WHERE id = ?').bind(id).first();
 
   return {
     run,
+    sessionBreakdown,
     window: {
       start: timeframeStart,
       end: timeframeEnd,

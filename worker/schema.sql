@@ -76,6 +76,23 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy_id ON backtest_runs(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_symbol ON backtest_runs(symbol);
 
+-- One row per (backtest_run_id, session) — session breakdown axis alongside
+-- backtest_runs' overall winrate/asset-fit metrics. See
+-- worker/src/backtest/sessions.js's header comment for the exact windows
+-- and the counting rule: 'overlap' is an informational subset already
+-- included in both 'london' and 'new_york', not a fifth/additive bucket —
+-- asia+london+new_york sums to the run's total trade_count, overlap does
+-- not add on top of that.
+CREATE TABLE IF NOT EXISTS backtest_session_breakdown (
+  backtest_run_id TEXT NOT NULL REFERENCES backtest_runs(id),
+  session TEXT NOT NULL CHECK (session IN ('asia','london','new_york','overlap')),
+  trade_count INTEGER NOT NULL DEFAULT 0,
+  win_rate REAL,
+  net_pnl REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (backtest_run_id, session)
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_session_breakdown_run_id ON backtest_session_breakdown(backtest_run_id);
+
 CREATE TABLE IF NOT EXISTS strategy_settings (
   strategy_id TEXT PRIMARY KEY REFERENCES strategies(id),
   risk_per_trade_pct REAL NOT NULL DEFAULT 1.0,
