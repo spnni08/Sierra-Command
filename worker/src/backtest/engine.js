@@ -58,6 +58,18 @@ function initialFixedExit(entry, direction, exit) {
   return { sl, tp };
 }
 
+function initialSignalOrSltpExit(entry, direction, exit) {
+  // Independent SL%/TP% (not an R-multiple of each other, unlike
+  // initialFixedExit) — matches v2/v3's Pine source, where
+  // v2stoploss_level/v2takeprofit_level are each their own flat percentage
+  // off strategy.position_avg_price.
+  const slDistance = entry * (exit.slPct / 100);
+  const tpDistance = entry * (exit.tpPct / 100);
+  const sl = direction === 'long' ? entry - slDistance : entry + slDistance;
+  const tp = direction === 'long' ? entry + tpDistance : entry - tpDistance;
+  return { sl, tp };
+}
+
 function initialTrailingExit(entry, direction, exit, atrValue) {
   const rDistance = (atrValue || entry * 0.01) * exit.trailing.atrMult;
   const sl = direction === 'long' ? entry - rDistance : entry + rDistance;
@@ -171,6 +183,38 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       continue;
     }
 
+    if (open && strategy.exit.mode === 'signal_or_sltp') {
+      // Racing exit mode (e.g. crypto_flawless_victory v2/v3): a standing
+      // fixed SL/TP bracket runs in parallel with the signal close on every
+      // bar a position is open — in Pine, strategy.exit()'s stop/limit is a
+      // broker-emulator order checked against the bar's actual intrabar
+      // high/low, while strategy.close() on the signal fires at bar close.
+      // Convention (reused from the existing fixed/trailing block below,
+      // kept for consistency across every exit mode in this engine):
+      //   1. Intrabar SL/TP is checked first — it would have already filled
+      //      before the bar closes and the signal could be evaluated.
+      //   2. If both SL and TP would hit on the same bar (gap/wide-range
+      //      bar), SL wins — same tie-break the fixed/trailing block below
+      //      already uses (`hitSl ? open.sl : open.tp`).
+      //   3. Only if neither SL nor TP hit intrabar is the close-signal
+      //      (evaluated at bar close) checked.
+      const hitSl = open.direction === 'long' ? candle.low <= open.sl : candle.high >= open.sl;
+      const hitTp = open.direction === 'long' ? candle.high >= open.tp : candle.low <= open.tp;
+      const signalClose = !hitSl && !hitTp && closeSignalAt && closeSignalAt(i, open.direction);
+
+      if (hitSl || hitTp || signalClose) {
+        const rawExit = hitSl ? open.sl : hitTp ? open.tp : candle.close;
+        const fillExit = exitCost(upperSymbol, assetClass, rawExit, open.direction);
+        let pnl = (open.direction === 'long' ? fillExit - open.entryFill : open.entryFill - fillExit) * volume;
+        if (assetClass === 'crypto') {
+          pnl -= cryptoTakerFee(upperSymbol, open.entryFill * volume) + cryptoTakerFee(upperSymbol, fillExit * volume);
+        }
+        trades.push({ ...open, exitFill: fillExit, exitIndex: i, reason: hitSl ? 'sl' : hitTp ? 'tp' : 'signal', pnl });
+        open = null;
+      }
+      continue;
+    }
+
     if (open) {
       const hitSl = open.direction === 'long' ? candle.low <= open.sl : candle.high >= open.sl;
       const hitTp = open.direction === 'long' ? candle.high >= open.tp : candle.low <= open.tp;
@@ -209,6 +253,8 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       const { sl, tp } =
         strategy.exit.mode === 'signal'
           ? { sl: null, tp: null } // no SL/TP at all — see the signal-only exit block above
+          : strategy.exit.mode === 'signal_or_sltp'
+          ? initialSignalOrSltpExit(entryFill, direction, strategy.exit)
           : strategy.exit.mode === 'trailing'
           ? initialTrailingExit(entryFill, direction, strategy.exit, atrSeries[i])
           : initialFixedExit(entryFill, direction, strategy.exit);
