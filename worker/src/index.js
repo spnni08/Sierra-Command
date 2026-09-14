@@ -6,6 +6,7 @@ import { handleApiRoute } from './routes/api.js';
 import { handleSimulationRoute } from './routes/simulation.js';
 import { handleWebhookRoute } from './routes/webhook.js';
 import { handleBacktestRoute } from './routes/backtest.js';
+import { handleWavescoutPriceRoute } from './routes/wavescout-price.js';
 import { withCors, handlePreflight } from './cors.js';
 
 export default {
@@ -36,6 +37,8 @@ export default {
         response = await handleWebhookRoute(request, url, env);
       } else if (url.pathname.startsWith('/backtest')) {
         response = await handleBacktestRoute(request, url, env);
+      } else if (url.pathname.startsWith('/wavescout')) {
+        response = await handleWavescoutPriceRoute(request, url, env);
       } else {
         response = Response.json({ error: 'not_found' }, { status: 404 });
       }
