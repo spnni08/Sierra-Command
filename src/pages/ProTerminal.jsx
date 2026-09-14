@@ -433,8 +433,15 @@ export default function ProTerminal() {
           </>
         )}
 
-        <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Strategie-Verbesserungen</div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* No real AI/analytics engine generates these suggestions (per PR
+            #24's docs — unchanged status) — same treatment as Multi-Chart's
+            Strategie-Matrix/Faktor-Auslastung: heading labeled and the
+            content dimmed + tagged MOCK rather than looking like live
+            engine output, layout kept as-is. */}
+        <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>
+          Strategie-Verbesserungen <span style={{ color: 'var(--txt3)', textTransform: 'none', letterSpacing: 0 }}>· noch nicht verfügbar (MOCK)</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', opacity: 0.5 }}>
           {STRATEGY_SUGGESTIONS.filter(s => dense || !s.denseOnly).map((s, i) => (
             <div key={i} style={{ padding: '8px 9px', borderBottom: '1px solid var(--line)', borderLeft: `2px solid ${s.priority === 'HOCH' ? 'var(--acc)' : 'var(--line2)'}` }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
@@ -445,8 +452,8 @@ export default function ProTerminal() {
               {s.expect && <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)', marginTop: 5 }}>{s.expect}</div>}
               {s.actions && (dense || s.priority === 'HOCH') && (
                 <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
-                  <button style={{ background: 'var(--acc)', border: 0, color: '#fff', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '4px 10px', cursor: 'pointer', letterSpacing: '0.06em' }}>ÜBERNEHMEN</button>
-                  <button style={{ background: 'transparent', border: '1px solid var(--line2)', color: 'var(--txt2)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '4px 10px', cursor: 'pointer', letterSpacing: '0.06em' }}>BACKTEST</button>
+                  <button disabled style={{ background: 'var(--acc)', border: 0, color: '#fff', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '4px 10px', cursor: 'not-allowed', letterSpacing: '0.06em' }}>ÜBERNEHMEN</button>
+                  <button disabled style={{ background: 'transparent', border: '1px solid var(--line2)', color: 'var(--txt2)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '4px 10px', cursor: 'not-allowed', letterSpacing: '0.06em' }}>BACKTEST</button>
                 </div>
               )}
             </div>
@@ -455,8 +462,12 @@ export default function ProTerminal() {
 
         {dense && (
           <>
-            <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Signal-Faktoren · aktuell</div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
+            {/* No real signal-factor engine backs these values either (same
+                mock status as above) — dimmed + labeled, layout unchanged. */}
+            <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>
+              Signal-Faktoren · aktuell <span style={{ color: 'var(--txt3)', textTransform: 'none', letterSpacing: 0 }}>· noch nicht verfügbar (MOCK)</span>
+            </div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, opacity: 0.5 }}>
               {SIGNAL_FACTORS.map((f, i, arr) => (
                 <div key={f.label} style={{ display: 'flex', padding: '4px 9px', borderBottom: i < arr.length - 1 ? '1px solid var(--line)' : 'none' }}>
                   <div style={{ width: 12, color: f.on ? 'var(--acc)' : 'var(--txt3)' }}>{f.on ? '✓' : '×'}</div>
