@@ -12,12 +12,20 @@
 //
 // Strategies WITHOUT an adapter (engine.js reports "no_indicator_adapter"),
 // and why:
-//   - crypto_mfi_engulfing, crypto_holy_grail_adx_sma_bb: need real
-//     candlestick body/wick pattern detection (engulfing, hammer, doji,
-//     wick-touch-then-close-inside) — undetectable on flat synthesized OHLC
-//     where open=high=low=close; holy_grail's wick-touch factor is also
-//     structurally unsatisfiable (low<=bbLower && close>bbLower can't both
-//     hold when low===close).
+//   - crypto_mfi_engulfing, crypto_holy_grail_adx_sma_bb used to be listed
+//     here too: both need real candlestick body/wick pattern detection
+//     (engulfing, hammer, doji, wick-touch-then-close-inside), undetectable
+//     on flat synthesized /market_chart OHLC where open=high=low=close.
+//     Verified empirically (with COINGECKO_API_KEY set) that CoinGecko's
+//     /ohlc endpoint gives genuine, non-flat O/H/L/C at every supported
+//     `days` bucket — granularity gets coarser for longer windows (4h bars
+//     up to 30 days, 4-day bars out to the free tier's 365-day cap) but
+//     never flat, so both are now implemented below
+//     (buildCryptoMfiEngulfing/buildCryptoHolyGrailAdxSmaBb) using
+//     candles.js's fetchCryptoRealOhlcCandles instead of the usual
+//     fetchCryptoCandles. See that function's comment for the full
+//     picture, including why MFI needs a second (volume) fetch merged in —
+//     /ohlc alone has no volume field at all.
 //   - crypto_sr_volume: needs true Volume Profile (VAL/VAH/POC from
 //     intrabar volume-at-price distribution) — CoinGecko's daily aggregate
 //     volume is one number per day, no price distribution to build that
@@ -542,6 +550,173 @@ function buildCryptoFlawlessVictoryV3(candles) {
   return { signalAt, closeSignalAt };
 }
 
+// crypto_mfi_engulfing and crypto_holy_grail_adx_sma_bb — unlike every
+// adapter above, these two read candles.js's fetchCryptoRealOhlcCandles()
+// (CoinGecko's /ohlc — genuine per-bucket O/H/L/C, confirmed empirically
+// with COINGECKO_API_KEY set: granularity depends only on the `days`
+// parameter, not the plan tier — 4h bars up to a 30-day window, 4-day bars
+// out to CoinGecko's free-tier 365-day cap, never flat) instead of
+// /market_chart's flat daily closes, specifically so their candle-body/wick
+// factors are computable at all — see candles.js's fetchCryptoRealOhlcCandles
+// comment for the full picture, including why MFI needs a second (volume)
+// fetch merged in by calendar day.
+//
+// Candlestick pattern geometry (engulfing/hammer/doji below) uses standard,
+// widely-documented technical-analysis definitions — this project has no
+// access to the original tradingview-bot Pine source's exact geometry (a
+// different, private repo), so these are this backtest's own compromise,
+// same as buildCryptoSrBollinger's documented proxy below. Flagged in
+// PARTIAL_ADAPTERS.
+function candleBody(c) {
+  return Math.abs(c.close - c.open);
+}
+function candleRange(c) {
+  return c.high - c.low;
+}
+function upperWick(c) {
+  return c.high - Math.max(c.open, c.close);
+}
+function lowerWick(c) {
+  return Math.min(c.open, c.close) - c.low;
+}
+function isBullish(c) {
+  return c.close > c.open;
+}
+function isBearish(c) {
+  return c.close < c.open;
+}
+
+// Standard 2-candle engulfing: prior candle's body fully contained within
+// (engulfed by) the current candle's body, with the current candle the
+// opposite color.
+function detectEngulfing(candles) {
+  const bullish = new Array(candles.length).fill(false);
+  const bearish = new Array(candles.length).fill(false);
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1];
+    const curr = candles[i];
+    if (isBearish(prev) && isBullish(curr) && curr.open <= prev.close && curr.close >= prev.open) {
+      bullish[i] = true;
+    }
+    if (isBullish(prev) && isBearish(curr) && curr.open >= prev.close && curr.close <= prev.open) {
+      bearish[i] = true;
+    }
+  }
+  return { bullish, bearish };
+}
+
+// Standard single-candle patterns: hammer (small body in the upper part of
+// the range, a lower wick at least 2x the body, little/no upper wick) and
+// doji (body negligible relative to the full range). Direction-agnostic —
+// callers combine with their own directional gates (e.g. MFI extreme zone).
+function detectHammer(candles) {
+  return candles.map((c) => {
+    const body = candleBody(c);
+    const range = candleRange(c);
+    if (!(range > 0)) return false;
+    return lowerWick(c) >= 2 * body && upperWick(c) <= body;
+  });
+}
+function detectDoji(candles) {
+  const DOJI_BODY_RATIO = 0.1;
+  return candles.map((c) => {
+    const range = candleRange(c);
+    if (!(range > 0)) return false;
+    return candleBody(c) <= DOJI_BODY_RATIO * range;
+  });
+}
+
+// MFI(14) extreme zone + filtered engulfing — see
+// strategies/cryptoMfiEngulfing.js's factors (mfi_extreme_zone,
+// filtered_engulfing_pattern). No trend filter/exit logic of its own here;
+// engine.js's trailing-SL (ATR-anchored) handles exits, same as every other
+// trailing-SL strategy.
+function buildCryptoMfiEngulfing(candles) {
+  const mfi14 = computeMfi(candles, 14);
+  const { bullish, bearish } = detectEngulfing(candles);
+
+  return function signalAt(i, direction) {
+    if (!Number.isFinite(mfi14[i])) return null;
+    return {
+      direction,
+      close: candles[i].close,
+      price: candles[i].close,
+      mfi: mfi14[i],
+      engulfing_bullish: bullish[i],
+      engulfing_bearish: bearish[i],
+    };
+  };
+}
+
+// ADX(14) trend regime + SMA(20)/BB(20, 0.25) wick-touch pullback + candle
+// pattern confirmation — see strategies/cryptoHolyGrailAdxSmaBb.js's
+// factors (adx_trending, sma_bb_pullback_zone, candle_pattern_confirm). The
+// wick-touch criterion (low/high touches the band, close stays inside) is
+// exactly what was structurally impossible on /market_chart's flat OHLC
+// (low===close there) — real /ohlc data is what makes this adapter possible
+// at all.
+function buildCryptoHolyGrailAdxSmaBb(candles) {
+  const closes = candles.map((c) => c.close);
+  const adx14 = computeAdx(candles, 14);
+  const { upper: bbUpper, lower: bbLower } = bollingerBands(closes, 20, 0.25);
+  const { bullish: engulfingBullish, bearish: engulfingBearish } = detectEngulfing(candles);
+  const hammer = detectHammer(candles);
+  const doji = detectDoji(candles);
+
+  return function signalAt(i, direction) {
+    if (!Number.isFinite(adx14[i]) || !Number.isFinite(bbUpper[i]) || !Number.isFinite(bbLower[i])) return null;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      low: candles[i].low,
+      high: candles[i].high,
+      adx: adx14[i],
+      bb_upper: bbUpper[i],
+      bb_lower: bbLower[i],
+      candle_pattern_hammer: hammer[i],
+      candle_pattern_engulfing: engulfingBullish[i] || engulfingBearish[i],
+      candle_pattern_doji: doji[i],
+    };
+  };
+}
+
+// Per-strategy warmup override for engine.js's default WARMUP_BARS=200 (an
+// EMA200-sized constant that fits every other adapter's long /market_chart
+// history but would make these two — sourced from /ohlc's much shorter
+// real-candle series, see above — permanently fail with
+// insufficient_candle_history however long a window is requested; ADX(14)'s
+// own Wilder smoothing needs ~3x its period before the first finite value
+// (see indicators.js's adx()), MFI(14)/a 2-candle engulfing check need far
+// less. Buffered above each strategy's actual minimum.
+export const ADAPTER_WARMUP_BARS = {
+  crypto_mfi_engulfing: 20,
+  crypto_mfi_engulfing_sl: 20,
+  crypto_holy_grail_adx_sma_bb: 50,
+  crypto_holy_grail_adx_sma_bb_sl: 50,
+};
+
+// Informational only (see candles.js's OHLC_DAYS_BUCKETS/pickOhlcDaysBucket
+// for the actual mechanism this describes) — not yet enforced by the engine
+// or read by the frontend. Documents empirically-verified behavior per
+// strategy: crypto_mfi_engulfing's low warmup (20 bars) clears even at the
+// thinnest bucket CoinGecko's /ohlc offers (days=90 -> 23 four-day bars),
+// so it's usable across the entire 1-365 day range /ohlc supports.
+// crypto_holy_grail_adx_sma_bb's ADX warmup (~42 bars, see
+// ADAPTER_WARMUP_BARS above) does NOT clear the days=90 (23 bars) or
+// days=180 (45 bars) buckets — only a window that resolves to the days=30
+// bucket (180 four-hour bars) or the days=365 bucket (92 four-day bars)
+// leaves any bars for actual signal evaluation. A request landing in the
+// 31-180 day range fails with the engine's existing insufficient_candle_
+// history error — an honest failure, not a silent bad result, so no
+// special-casing was added beyond documenting it here.
+export const ADAPTER_METADATA = {
+  crypto_mfi_engulfing: { maxWindowDays: 365 },
+  crypto_mfi_engulfing_sl: { maxWindowDays: 365 },
+  crypto_holy_grail_adx_sma_bb: { maxWindowDays: 365, note: 'requested windows resolving to CoinGecko /ohlc days=90 or days=180 buckets fail warmup — see ADAPTER_WARMUP_BARS comment' },
+  crypto_holy_grail_adx_sma_bb_sl: { maxWindowDays: 365, note: 'requested windows resolving to CoinGecko /ohlc days=90 or days=180 buckets fail warmup — see ADAPTER_WARMUP_BARS comment' },
+};
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
@@ -563,17 +738,29 @@ export const ADAPTERS = {
   // not do. It stays no_indicator_adapter.
   crypto_flawless_victory_v2: buildCryptoFlawlessVictoryV2,
   crypto_flawless_victory_v3: buildCryptoFlawlessVictoryV3,
+  crypto_mfi_engulfing: buildCryptoMfiEngulfing,
+  crypto_mfi_engulfing_sl: buildCryptoMfiEngulfing,
+  crypto_holy_grail_adx_sma_bb: buildCryptoHolyGrailAdxSmaBb,
+  crypto_holy_grail_adx_sma_bb_sl: buildCryptoHolyGrailAdxSmaBb,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
 // a faithful reproduction of the Pine-side trigger — surfaced in the
 // backtest response (see engine.js) so results aren't mistaken for
 // full-fidelity ones.
+const ENGULFING_PATTERN_CAVEAT =
+  'Uses this backtest\'s own standard engulfing-pattern definition (2-bar body containment) — the original Pine source (a different, private repo) is not available to this project to match its exact geometry against.';
+const HOLY_GRAIL_PATTERN_CAVEAT =
+  'Wick-touch-inside-band criterion uses real O/H/L/C (CoinGecko /ohlc), faithful to the Pine intent. Hammer/doji/engulfing pattern detection uses this backtest\'s own standard technical-analysis definitions — the original Pine source (a different, private repo) is not available to this project to match its exact geometry against.';
 export const PARTIAL_ADAPTERS = {
   crypto_sr_bollinger:
     'Real Pine trigger needs a wick to pierce the Bollinger band while the close stays inside (true intrabar bounce). This backtest uses daily close-only candles (no real intrabar range), so a close-only 2-bar cross-back-inside-the-band proxy is used instead — same "rejection then reclaim" idea, but triggers on different/fewer bars than the real intrabar strategy would.',
   crypto_sr_bollinger_sl:
     'Real Pine trigger needs a wick to pierce the Bollinger band while the close stays inside (true intrabar bounce). This backtest uses daily close-only candles (no real intrabar range), so a close-only 2-bar cross-back-inside-the-band proxy is used instead — same "rejection then reclaim" idea, but triggers on different/fewer bars than the real intrabar strategy would.',
+  crypto_mfi_engulfing: ENGULFING_PATTERN_CAVEAT,
+  crypto_mfi_engulfing_sl: ENGULFING_PATTERN_CAVEAT,
+  crypto_holy_grail_adx_sma_bb: HOLY_GRAIL_PATTERN_CAVEAT,
+  crypto_holy_grail_adx_sma_bb_sl: HOLY_GRAIL_PATTERN_CAVEAT,
 };
 
 export function getAdapter(strategyId) {
