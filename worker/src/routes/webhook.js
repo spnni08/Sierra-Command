@@ -50,6 +50,20 @@ async function logActivity(env, source, message) {
     .run();
 }
 
+// Builds the {id, sl, tp} bracket for one strategy variant's exit config,
+// given an already-validated entry price and direction. Shared by the fixed
+// leg and the trailing-SL fan-out leg below — see the slPct/rMultiple
+// comment further down for why trailing variants bootstrap off
+// DEFAULT_EXIT.slPct.
+function computeBracket(exit, direction, entry) {
+  const slPct = exit.mode === 'fixed' ? exit.slPct : DEFAULT_EXIT.slPct;
+  const rMultiple = exit.tp2RMultiple ?? DEFAULT_EXIT.tp2RMultiple;
+  const slDistance = entry * (slPct / 100);
+  const sl = direction === 'long' ? entry - slDistance : entry + slDistance;
+  const tp = direction === 'long' ? entry + slDistance * rMultiple : entry - slDistance * rMultiple;
+  return { sl, tp };
+}
+
 async function processWebhook(request, env, strategyKey) {
   let payload;
   try {
@@ -64,6 +78,20 @@ async function processWebhook(request, env, strategyKey) {
     return Response.json({ error: 'unknown_strategy', strategyKey }, { status: 404 });
   }
 
+  // Fan-out: a hit on a fixed-variant key (exit.mode === 'fixed') also opens
+  // the paired trailing-SL ("_sl") trade, mirroring WAVESCOUT's "one alert,
+  // both variants" behavior — see worker/src/strategies/index.js's
+  // buildRegistry() for how `<key>` and `<key>_sl` share the same evaluate()
+  // and only differ in exit config. crypto_flawless_victory v1 is naturally
+  // excluded here since its base exit.mode is 'signal', not 'fixed' (see
+  // cryptoFlawlessVictory.js's signalOnlyExit); v2/v3 are excluded because
+  // they're registered as their own standalone keys with no "_sl" pair at
+  // all. A direct hit on a "_sl" key itself (exit.mode === 'trailing') never
+  // fans out — that's the legacy/manual path, kept working unchanged for
+  // backwards compatibility with any alert still pointed straight at it.
+  const slKey = `${strategyKey}_sl`;
+  const slStrategy = strategy.exit.mode === 'fixed' ? getStrategy(slKey) : null;
+
   const direction = String(payload?.direction ?? '').toLowerCase();
   if (direction !== 'long' && direction !== 'short') {
     await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlende oder ungültige direction`);
@@ -76,6 +104,10 @@ async function processWebhook(request, env, strategyKey) {
     return Response.json({ error: 'missing_symbol' }, { status: 400 });
   }
 
+  // The entry condition (the AND-gated factor chain) is identical between a
+  // base strategy and its "_sl" variant — only the exit config differs (see
+  // index.js's buildRegistry comment) — so one evaluate() call covers both
+  // legs of the fan-out; there's no separate "_sl" evaluation to run.
   const result = evaluateSignal(strategyKey, payload);
   const matched = result.matched ?? [];
   const failed = result.failed ?? [];
@@ -102,6 +134,24 @@ async function processWebhook(request, env, strategyKey) {
     });
   }
 
+  // A passing fixed-variant signal also opens the paired "_sl" trade: same
+  // matched/failed factor result (same entry condition), a second `signals`
+  // row keyed by the "_sl" strategy id (status/exit_mode reflect that leg),
+  // and — if a price is available — a second `trades` row. No new schema
+  // column is needed to link the pair: each leg is its own normal
+  // signal+trade row, distinguishable by strategy_id/exit_mode and created
+  // in the same webhook call (same symbol/timestamp).
+  let pairedSignalId = null;
+  if (slStrategy) {
+    pairedSignalId = makeId(`sig-${slKey}`);
+    await env.DB.prepare(
+      `INSERT INTO signals (id, strategy_id, symbol, timestamp, score, factor_state, status, exit_mode, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'converted', ?, ?)`
+    )
+      .bind(pairedSignalId, slKey, symbol, ts, score, factorState, slStrategy.exit.mode, ts)
+      .run();
+  }
+
   const entry = Number(payload.price ?? payload.close);
   if (!Number.isFinite(entry)) {
     await logActivity(
@@ -110,7 +160,17 @@ async function processWebhook(request, env, strategyKey) {
       `Webhook /webhook/${strategyKey} ${symbol}: Signal bestätigt, aber kein gültiger Preis im Payload → kein Trade`
     );
     return Response.json({
-      data: { passed: true, strategyKey, symbol, signalId, matched, failed, trade: null, reason: 'missing_price' },
+      data: {
+        passed: true,
+        strategyKey,
+        symbol,
+        signalId,
+        matched,
+        failed,
+        trade: null,
+        pairedTrade: null,
+        reason: 'missing_price',
+      },
     });
   }
 
@@ -123,11 +183,7 @@ async function processWebhook(request, env, strategyKey) {
   // this endpoint). DEFAULT_EXIT.slPct is used as the initial bootstrap SL
   // so the trade still opens with a sane stop; a later trailing-update step
   // is expected to move it.
-  const slPct = strategy.exit.mode === 'fixed' ? strategy.exit.slPct : DEFAULT_EXIT.slPct;
-  const rMultiple = strategy.exit.tp2RMultiple ?? DEFAULT_EXIT.tp2RMultiple;
-  const slDistance = entry * (slPct / 100);
-  const sl = direction === 'long' ? entry - slDistance : entry + slDistance;
-  const tp = direction === 'long' ? entry + slDistance * rMultiple : entry - slDistance * rMultiple;
+  const { sl, tp } = computeBracket(strategy.exit, direction, entry);
 
   const tradeId = makeId(`trd-${strategyKey}`);
   await env.DB.prepare(
@@ -140,12 +196,32 @@ async function processWebhook(request, env, strategyKey) {
   await logActivity(
     env,
     'binance',
-    `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry}`
+    `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (fixed)`
   );
+
+  let pairedTrade = null;
+  if (slStrategy && pairedSignalId) {
+    const { sl: pairedSl, tp: pairedTp } = computeBracket(slStrategy.exit, direction, entry);
+    const pairedTradeId = makeId(`trd-${slKey}`);
+    await env.DB.prepare(
+      `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, opened_at, closed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, NULL)`
+    )
+      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, pairedSl, pairedTp, volume, slStrategy.exit.mode, ts)
+      .run();
+
+    await logActivity(
+      env,
+      'binance',
+      `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (paired ${slKey}, trailing)`
+    );
+
+    pairedTrade = await env.DB.prepare('SELECT * FROM trades WHERE id = ?').bind(pairedTradeId).first();
+  }
 
   const trade = await env.DB.prepare('SELECT * FROM trades WHERE id = ?').bind(tradeId).first();
 
   return Response.json({
-    data: { passed: true, strategyKey, symbol, signalId, matched, failed, trade },
+    data: { passed: true, strategyKey, symbol, signalId, matched, failed, trade, pairedTrade },
   });
 }
