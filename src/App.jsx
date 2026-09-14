@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard';
 import LogPage from './pages/LogPage';
 import AutoTrade from './pages/AutoTrade';
 import Settings from './pages/Settings';
+import Auswertung from './pages/Auswertung';
 
 function Shell() {
   const { theme } = useApp();
@@ -33,6 +34,7 @@ function Shell() {
         {page === 'log' && <LogPage />}
         {page === 'autosettings' && <AutoTrade />}
         {page === 'settings' && <Settings />}
+        {page === 'auswertung' && <Auswertung />}
       </div>
 
       <Footer />
