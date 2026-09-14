@@ -33,6 +33,15 @@ export function fetchBacktestRuns(strategyId) {
   return getJson(`/api/backtest-runs${qs}`);
 }
 
+// { strategy_id, logic_hash, updated_at, last_invalidated_at }[] — used to
+// tell "this strategy's backtest_runs were just wiped because its adapter
+// logic changed" apart from "never backtested at all" (last_invalidated_at
+// is null in the latter case). See worker/schema.sql's
+// strategy_logic_versions comment.
+export function fetchStrategyLogicVersions() {
+  return getJson('/api/strategy-logic-versions');
+}
+
 // Unlike getJson, a non-2xx response here is not necessarily a transport
 // failure — /backtest/run returns structured 400s for known conditions
 // (no_indicator_adapter, candle_fetch_failed, insufficient_candle_history)

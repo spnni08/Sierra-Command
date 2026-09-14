@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import TradingViewWidget from '../components/TradingViewWidget';
 import { STRATEGY_SUGGESTIONS, SIGNAL_FACTORS, MULTI_CHART_TILES } from '../data/mockData';
-import { fetchBacktestRuns, fetchStrategies, fetchTrades, runBacktest } from '../api/client';
+import { fetchBacktestRuns, fetchStrategies, fetchStrategyLogicVersions, fetchTrades, runBacktest } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import { useLiveTradePnl } from '../api/useLiveTradePnl';
 import { pnlDisplay, fmtPnlNum } from '../lib/pnlFormat';
@@ -232,6 +232,9 @@ export default function ProTerminal() {
   const backtestQ = useFetch(loadBacktests, [loadBacktests]);
   const latestStoredBacktest = (backtestQ.data && backtestQ.data[0]) || null;
 
+  const loadLogicVersions = useCallback(() => fetchStrategyLogicVersions(), []);
+  const logicVersionsQ = useFetch(loadLogicVersions, [loadLogicVersions]);
+
   const loadStrategies = useCallback(() => fetchStrategies(), []);
   const strategiesQ = useFetch(loadStrategies, [loadStrategies]);
   const allStrategies = strategiesQ.data || [];
@@ -268,6 +271,21 @@ export default function ProTerminal() {
   // latest persisted backtest_runs row when nothing's been run this session.
   const displayedBacktest = manualRun?.run ?? latestStoredBacktest;
   const displayedMetrics = manualRun?.metrics ?? null;
+
+  // "No backtest for the selected strategy" has two different causes that
+  // need two different messages: never backtested at all, vs. backtested
+  // before but invalidated because the strategy's adapter logic changed
+  // since (see worker/schema.sql's strategy_logic_versions comment and
+  // worker/scripts/generate-logic-invalidation-sql.mjs, which populates
+  // last_invalidated_at only on an actual hash change that deleted runs —
+  // never on a strategy_settings change, which lives in a separate table
+  // this mechanism never reads). hasStoredRunForSelected filters
+  // backtestQ.data by strategy explicitly because that query itself is not
+  // strategy-scoped (it loads every stored run, newest-first, across all
+  // strategies).
+  const hasStoredRunForSelected = (backtestQ.data || []).some((r) => r.strategy_id === effectiveStrategyId);
+  const selectedLogicVersion = (logicVersionsQ.data || []).find((v) => v.strategy_id === effectiveStrategyId);
+  const selectedWasInvalidated = !manualRun && !hasStoredRunForSelected && !!selectedLogicVersion?.last_invalidated_at;
 
   return (
     <div style={{ height: '100%', display: 'grid', gridTemplateColumns: dense ? '1fr 340px' : '1fr 300px', gap: 1, background: 'var(--line)', minHeight: 0 }}>
@@ -426,6 +444,11 @@ export default function ProTerminal() {
             ⚠ Zeitraum wurde auf CoinGeckos 365-Tage-Historienlimit begrenzt.
           </div>
         )}
+        {!btLoading && selectedWasInvalidated && (
+          <div style={{ padding: '10px 9px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--acc)', borderBottom: '1px solid var(--line)', background: 'var(--accsoft)' }}>
+            ⚠ Strategie-Logik wurde seit dem letzten Backtest aktualisiert — bitte neu laufen lassen.
+          </div>
+        )}
 
         <StatusPanel loading={backtestQ.loading && !manualRun} error={!manualRun ? backtestQ.error : null} onRetry={backtestQ.reload} />
         {!btLoading && (backtestQ.data || manualRun) && !(backtestQ.error && !manualRun) && (
@@ -463,7 +486,11 @@ export default function ProTerminal() {
                 <EquityCurve trades={manualRun.trades} />
               ) : (
                 <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>
-                  {manualRun ? 'Keine Trades im Zeitraum' : 'Noch kein Backtest in dieser Sitzung gelaufen'}
+                  {manualRun
+                    ? 'Keine Trades im Zeitraum'
+                    : selectedWasInvalidated
+                      ? 'Strategie-Logik wurde aktualisiert — vorheriger Backtest wurde verworfen'
+                      : 'Noch kein Backtest in dieser Sitzung gelaufen'}
                 </div>
               )}
             </div>

@@ -101,6 +101,29 @@ CREATE TABLE IF NOT EXISTS strategy_settings (
   news_filter_threshold REAL NOT NULL DEFAULT 0.5
 );
 
+-- One row per strategy that has an entry in backtest/adapters.js's ADAPTERS
+-- map, tracking a content hash of that strategy's adapter function (the
+-- actual indicator/gate logic a backtest runs against) as of the last
+-- deploy. Deliberately does NOT cover strategy_settings (risk_per_trade_pct,
+-- session_filter, correlation_limit, news_filter_threshold) — those are
+-- auto-trade knobs, not logic, and changing them must never invalidate a
+-- strategy's backtest_runs. See worker/scripts/invalidate-backtest-logic.mjs
+-- (generates the idempotent SQL run by worker-deploy.yml on every deploy)
+-- and worker/src/backtest/adapters.js's header comment for why some
+-- strategies never get a row here at all (no adapter => no backtest_runs to
+-- ever invalidate).
+CREATE TABLE IF NOT EXISTS strategy_logic_versions (
+  strategy_id TEXT PRIMARY KEY REFERENCES strategies(id),
+  logic_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Set only when a hash change actually deleted existing backtest_runs
+  -- rows for this strategy (see the invalidation script) — distinct from
+  -- updated_at, which also moves on the very first hash capture (no prior
+  -- runs to invalidate). NULL means "never invalidated"; the frontend uses
+  -- this to tell "logic changed, please re-run" apart from "never run yet".
+  last_invalidated_at TEXT
+);
+
 -- Credentials are encrypted client-side of the DB (see worker/src/lib/crypto.js);
 -- D1 only ever stores ciphertext. See README note below for rationale.
 --
