@@ -1,6 +1,7 @@
-// Thin fetch helper for the Cloudflare Worker + D1 backend. Structural data
-// only (strategies, trades, activity log, backtest runs) — live price data
-// stays on mock/Alpha Vantage/Binance and does not go through this client.
+// Thin fetch helper for the Cloudflare Worker + D1 backend: structural data
+// (strategies, trades, activity log, backtest runs) plus the live current-
+// price proxies (/coingecko/price, /twelvedata/price) used for mark-to-
+// market P/L on open trades.
 
 const BASE_URL = 'https://sierra-command-worker.vinhehemar.workers.dev';
 
@@ -79,6 +80,40 @@ export async function putStrategySettings(strategyId, settings) {
   }
   const body = await res.json();
   return body.data;
+}
+
+// Live current prices for open-trade P/L, keyed by our own symbol strings
+// (not the upstream provider's). Never throws for a "no live price for this
+// symbol" situation — that's an honest per-symbol gap (unsupported symbol,
+// provider not configured, upstream error), not a transport failure, so
+// callers get back a {symbol: price|null} map and render "–" for any null
+// rather than crashing the whole table.
+async function fetchLivePrices(path, symbols) {
+  if (symbols.length === 0) return {};
+  const qs = `?symbol=${encodeURIComponent(symbols.join(','))}`;
+  try {
+    const res = await fetch(`${BASE_URL}${path}${qs}`);
+    if (!res.ok) return Object.fromEntries(symbols.map((s) => [s, null]));
+    const body = await res.json();
+    if (body.status === 'not_configured' || body.error) {
+      return Object.fromEntries(symbols.map((s) => [s, null]));
+    }
+    return body.data?.prices || Object.fromEntries(symbols.map((s) => [s, null]));
+  } catch {
+    return Object.fromEntries(symbols.map((s) => [s, null]));
+  }
+}
+
+// BTC/ETH/SOL (and their USDT-suffixed trade-row spellings) — see
+// routes/coingecko.js's SYMBOL_TO_ID.
+export function fetchCryptoPrices(symbols) {
+  return fetchLivePrices('/coingecko/price', symbols);
+}
+
+// EURUSD/SPX500/NAS100 — the simulated-OANDA instruments — see
+// routes/twelvedata.js's SYMBOL_MAP.
+export function fetchForexIndexPrices(symbols) {
+  return fetchLivePrices('/twelvedata/price', symbols);
 }
 
 export async function patchStrategyActive(strategyId, active) {

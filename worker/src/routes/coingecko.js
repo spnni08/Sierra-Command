@@ -25,7 +25,63 @@ export async function handleCoinGeckoRoute(request, url, env) {
     return getCandles(url, env);
   }
 
+  if (path === '/price' && request.method === 'GET') {
+    return getPrice(request, url, env);
+  }
+
   return Response.json({ error: 'not_found', path }, { status: 404 });
+}
+
+// Live current price for open-trade mark-to-market P/L (frontend polling),
+// distinct from /candles (historical OHLC for backtesting). Accepts a
+// comma-separated symbol list so the frontend can fetch every open crypto
+// position's price in one request instead of one per symbol.
+const PRICE_CACHE_TTL_SECONDS = 15;
+
+async function getPrice(request, url, env) {
+  const symbolsParam = (url.searchParams.get('symbol') || 'BTC').toUpperCase();
+  const symbols = [...new Set(symbolsParam.split(',').map((s) => s.trim()).filter(Boolean))];
+
+  const unsupported = symbols.filter((s) => !SYMBOL_TO_ID[s]);
+  if (unsupported.length > 0) {
+    return Response.json(
+      { error: 'unsupported_symbol', symbol: unsupported.join(','), supported: Object.keys(SYMBOL_TO_ID) },
+      { status: 400 }
+    );
+  }
+
+  // Short-TTL edge cache, same pattern as routes/wavescout-price.js — keeps
+  // repeated frontend polling (every 10-30s across possibly several open
+  // tabs) from re-hitting CoinGecko on every request.
+  const cache = caches.default;
+  const cacheKey = new Request(`${url.origin}/coingecko/price?symbol=${symbols.slice().sort().join(',')}`, request);
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const coinIds = [...new Set(symbols.map((s) => SYMBOL_TO_ID[s]))];
+  const upstream = new URL(`${COINGECKO_API}/simple/price`);
+  upstream.searchParams.set('ids', coinIds.join(','));
+  upstream.searchParams.set('vs_currencies', 'usd');
+  if (env.COINGECKO_API_KEY) upstream.searchParams.set('x_cg_demo_api_key', env.COINGECKO_API_KEY);
+
+  const res = await fetch(upstream.toString(), { headers: { 'User-Agent': 'sierra-command-worker' } });
+  if (!res.ok) {
+    return Response.json({ error: 'coingecko_upstream_error', status: res.status }, { status: 502 });
+  }
+  const raw = await res.json();
+
+  const prices = {};
+  for (const symbol of symbols) {
+    const coinId = SYMBOL_TO_ID[symbol];
+    prices[symbol] = raw?.[coinId]?.usd ?? null;
+  }
+
+  const response = Response.json(
+    { data: { prices } },
+    { headers: { 'Cache-Control': `public, max-age=${PRICE_CACHE_TTL_SECONDS}` } }
+  );
+  await cache.put(cacheKey, response.clone());
+  return response;
 }
 
 async function getCandles(url, env) {
