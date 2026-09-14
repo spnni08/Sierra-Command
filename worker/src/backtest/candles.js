@@ -192,6 +192,14 @@ export const REAL_OHLC_STRATEGY_IDS = new Set([
   'crypto_mfi_engulfing_sl',
   'crypto_holy_grail_adx_sma_bb',
   'crypto_holy_grail_adx_sma_bb_sl',
+  // crypto_ict_smc needs real high/low for swing/BOS/CHoCH/OB/FVG geometry
+  // (see backtest/ictSmcAdapter.js) — impossible on flat /market_chart OHLC.
+  'crypto_ict_smc',
+  'crypto_ict_smc_sl',
+  // crypto_sr_volume's "Support & Resistance Dynamic" substitute needs real
+  // high/low for its ATR and wick-touch check (see backtest/srDynamicAdapter.js).
+  'crypto_sr_volume',
+  'crypto_sr_volume_sl',
 ]);
 
 /**
