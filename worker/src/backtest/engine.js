@@ -9,8 +9,8 @@
 // backtestable yet (their factors gate on Pine-side semantic flags, not
 // plain OHLC-derived indicators, and CoinGecko's free OHLC has no volume).
 import { getStrategy } from '../strategies/index.js';
-import { getAdapter, PARTIAL_ADAPTERS } from './adapters.js';
-import { fetchHistoricalCandles, assetClassFor } from './candles.js';
+import { getAdapter, PARTIAL_ADAPTERS, ADAPTER_WARMUP_BARS } from './adapters.js';
+import { fetchHistoricalCandles, assetClassFor, REAL_OHLC_STRATEGY_IDS } from './candles.js';
 import { resolveWindow } from './window.js';
 import { computeMetrics } from './metrics.js';
 import { computeSessionBreakdown } from './sessions.js';
@@ -19,8 +19,11 @@ import { halfSpreadPrice as oandaHalfSpread } from '../simulation/oanda-costs.js
 import { halfSpreadPrice as cryptoHalfSpread, takerFee as cryptoTakerFee } from '../simulation/crypto-costs.js';
 
 // crypto_baseline's slowest indicator is EMA200 — bars before that have no
-// signal. Same warmup constant used regardless of adapter for now, since
-// it's the only one implemented; revisit per-adapter if more are added.
+// signal. Default warmup for every adapter except the ones in
+// ADAPTER_WARMUP_BARS (adapters.js) — those are sourced from /ohlc's much
+// shorter real-candle series (see candles.js's fetchCryptoRealOhlcCandles)
+// and would otherwise permanently fail insufficient_candle_history however
+// long a window is requested.
 const WARMUP_BARS = 200;
 
 function nowSql() {
@@ -98,14 +101,25 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
   if (window.error) return { error: window.error };
 
   const assetClass = assetClassFor(upperSymbol);
-  // EMA200 (the slowest indicator any adapter uses today) needs ~200 bars
-  // of history before it produces a value — fetch extra lookback padding
-  // before the requested window purely for warmup, but only ever open
-  // trades on candles inside the actual requested [start, end]. Padding is
-  // generous on purpose (indicator warmup days, not trading days) — crypto
-  // candles here are CoinGecko's daily /market_chart series (see
-  // candles.js), so 220 padding days ≈220 extra daily bars.
-  const paddingDays = assetClass === 'crypto' ? 220 : 300;
+  const isRealOhlcStrategy = REAL_OHLC_STRATEGY_IDS.has(strategyId);
+  const warmupBars = ADAPTER_WARMUP_BARS[strategyId] ?? WARMUP_BARS;
+
+  // EMA200 (the slowest indicator any /market_chart-backed adapter uses)
+  // needs ~200 bars of history before it produces a value — fetch extra
+  // lookback padding before the requested window purely for warmup, but
+  // only ever open trades on candles inside the actual requested
+  // [start, end]. Padding is generous on purpose (indicator warmup days,
+  // not trading days) — crypto candles here are CoinGecko's daily
+  // /market_chart series (see candles.js), so 220 padding days ≈220 extra
+  // daily bars.
+  //
+  // The /ohlc-backed strategies (isRealOhlcStrategy) skip this entirely:
+  // /ohlc has no "extra days before window.start" concept to fetch (it's
+  // always "last N days from now" — see candles.js's
+  // fetchCryptoRealOhlcCandles), and their warmup (tens of bars, not
+  // hundreds — see ADAPTER_WARMUP_BARS) is small enough to just consume the
+  // window's own leading bars instead of needing dedicated padding.
+  const paddingDays = isRealOhlcStrategy ? 0 : assetClass === 'crypto' ? 220 : 300;
   let fetchStart = new Date(window.start.getTime() - paddingDays * 86_400_000);
 
   // CoinGecko's free public API caps historical data at 365 days back
@@ -129,15 +143,15 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
 
   let candles;
   try {
-    candles = await fetchHistoricalCandles(upperSymbol, fetchStart, window.end, env);
+    candles = await fetchHistoricalCandles(upperSymbol, fetchStart, window.end, env, strategyId);
   } catch (err) {
     return { error: 'candle_fetch_failed', message: err.message };
   }
 
-  if (candles.length < WARMUP_BARS) {
+  if (candles.length < warmupBars) {
     return {
       error: 'insufficient_candle_history',
-      message: `Need at least ${WARMUP_BARS} candles (including warmup lookback) for indicator warmup (e.g. EMA200), got ${candles.length}. Try a longer window.`,
+      message: `Need at least ${warmupBars} candles (including warmup lookback) for indicator warmup, got ${candles.length}. Try a longer window.`,
       candleCount: candles.length,
     };
   }
@@ -159,7 +173,7 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
   const trades = [];
   let open = null; // { direction, entry, sl, tp, openIndex }
 
-  for (let i = WARMUP_BARS; i < candles.length; i++) {
+  for (let i = warmupBars; i < candles.length; i++) {
     const candle = candles[i];
 
     if (open && strategy.exit.mode === 'signal') {
