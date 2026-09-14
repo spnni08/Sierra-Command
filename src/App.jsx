@@ -3,12 +3,14 @@ import { AppProvider, useApp } from './context/AppContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import UpdateAvailableModal from './components/UpdateAvailableModal';
+import TradeToasts from './components/TradeToasts';
 import MultiChart from './pages/MultiChart';
 import ProTerminal from './pages/ProTerminal';
 import Dashboard from './pages/Dashboard';
 import LogPage from './pages/LogPage';
 import AutoTrade from './pages/AutoTrade';
 import Settings from './pages/Settings';
+import Auswertung from './pages/Auswertung';
 
 function Shell() {
   const { theme } = useApp();
@@ -32,10 +34,12 @@ function Shell() {
         {page === 'log' && <LogPage />}
         {page === 'autosettings' && <AutoTrade />}
         {page === 'settings' && <Settings />}
+        {page === 'auswertung' && <Auswertung />}
       </div>
 
       <Footer />
       <UpdateAvailableModal />
+      <TradeToasts />
     </div>
   );
 }

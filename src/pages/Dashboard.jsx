@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { fetchTrades, fetchStrategies, fetchBacktestRuns, fetchPnlCalendar } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
+import { StrategyStatsHeaderRow, StrategyStatsRow } from '../components/StrategyStatsTable';
 
 function fmtNum(v, dec = 2) {
   if (v === null || v === undefined) return '—';
@@ -15,11 +16,11 @@ function fmtPct(v) {
 
 // Per-strategy stats are joined from strategies + their latest backtest_runs
 // row — the fields actually available today (profit factor, Sharpe, max
-// drawdown). trades.signal_id isn't populated in the current seed data, so
-// there's no real per-strategy trade linkage yet to derive winrate/trade
+// drawdown, win rate). trades.signal_id isn't populated in the current seed
+// data, so there's no real per-strategy trade linkage yet to derive trade
 // count/live PnL from; that's a later step once real signal->trade linkage
 // exists.
-function toStrategyStatRow(strategy, backtestRuns) {
+export function toStrategyStatRow(strategy, backtestRuns) {
   const runs = backtestRuns.filter(r => r.strategy_id === strategy.id);
   const latest = runs[0] || null;
   return {
@@ -30,6 +31,7 @@ function toStrategyStatRow(strategy, backtestRuns) {
     profitFactor: latest ? fmtNum(latest.profit_factor) : '—',
     sharpe: latest ? fmtNum(latest.sharpe) : '—',
     maxDrawdown: latest ? '−' + fmtPct(Math.abs(latest.max_drawdown)) : '—',
+    winrate: latest && latest.win_rate != null ? fmtPct(latest.win_rate) : '—',
   };
 }
 
@@ -331,17 +333,9 @@ export default function Dashboard({ goAutoSettings, goLog }) {
         <StatusPanel loading={strategyStatsQ.loading} error={strategyStatsQ.error} onRetry={strategyStatsQ.reload} />
         {!strategyStatsQ.loading && !strategyStatsQ.error && (
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflow: 'auto', maxHeight: 220 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 90px 90px', padding: '4px 12px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 480, position: 'sticky', top: 0, background: 'var(--panel)' }}>
-              <div>STRATEGIE</div><div>SYMBOL</div><div style={{ textAlign: 'right' }}>PROFIT-F.</div><div style={{ textAlign: 'right' }}>SHARPE</div><div style={{ textAlign: 'right' }}>MAX. DD</div>
-            </div>
+            <StrategyStatsHeaderRow minWidth={480} />
             {strategyStats.map(s => (
-              <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 90px 90px', padding: '5px 12px', borderBottom: '1px solid var(--line)', minWidth: 480 }}>
-                <div style={{ color: s.active ? 'var(--txt)' : 'var(--txt3)' }}>{s.name}</div>
-                <div style={{ color: 'var(--txt2)' }}>{s.symbol}</div>
-                <div style={{ textAlign: 'right' }}>{s.profitFactor}</div>
-                <div style={{ textAlign: 'right' }}>{s.sharpe}</div>
-                <div style={{ textAlign: 'right', color: 'var(--acc)' }}>{s.maxDrawdown}</div>
-              </div>
+              <StrategyStatsRow key={s.id} row={s} minWidth={480} />
             ))}
           </div>
         )}

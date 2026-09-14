@@ -1,13 +1,31 @@
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { TICKER } from '../data/mockData';
 
-const TABS = [
-  { key: 'multi', label: 'Multi-Chart' },
-  { key: 'pro', label: 'Pro-Terminal' },
-  { key: 'dash', label: 'Dashboard' },
-  { key: 'log', label: 'Log' },
-  { key: 'autosettings', label: 'Auto-Trade' },
-  { key: 'settings', label: 'Einstellungen' },
+const DASHBOARD_TAB = { key: 'dash', label: 'Dashboard' };
+
+// Group A: chart/analysis pages. Group B: operations/config pages.
+// "Dashboard" deliberately stays out of both, per design — it's the one
+// standalone direct tab.
+const GROUPS = [
+  {
+    key: 'groupA',
+    label: 'Analyse',
+    items: [
+      { key: 'multi', label: 'Multi-Chart' },
+      { key: 'pro', label: 'Pro-Terminal' },
+      { key: 'auswertung', label: 'Auswertung' },
+    ],
+  },
+  {
+    key: 'groupB',
+    label: 'Verwaltung',
+    items: [
+      { key: 'autosettings', label: 'Auto-Trade' },
+      { key: 'settings', label: 'Einstellungen' },
+      { key: 'log', label: 'Log' },
+    ],
+  },
 ];
 
 const tabBtn = {
@@ -16,8 +34,104 @@ const tabBtn = {
   cursor: 'pointer', textTransform: 'uppercase', height: '100%', whiteSpace: 'nowrap', flexShrink: 0,
 };
 
+function labelFor(group, pageKey) {
+  return group.items.find(i => i.key === pageKey)?.label ?? pageKey;
+}
+
+// Angular/kantig dropdown menu — square corners, hard borders, no shadow
+// softness beyond the existing panel/line theme tokens, matching the rest
+// of the app's chrome in both light and dark themes.
+function GroupDropdown({ group, page, setPage, lastVisitedByGroup, setLastVisited }) {
+  const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState(null);
+  const ref = useRef(null);
+  const active = group.items.some(i => i.key === page);
+  const lastVisited = lastVisitedByGroup[group.key];
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  // The header bar clips overflow (horizontal ticker scroll), so an
+  // absolutely-positioned menu inside it would be cut off — fixed-position
+  // it instead, anchored to the trigger button's own on-screen rect.
+  function toggleOpen() {
+    if (!open && ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setMenuPos({ top: r.bottom, left: r.left });
+    }
+    setOpen(o => !o);
+  }
+
+  function go(pageKey) {
+    setPage(pageKey);
+    setLastVisited(group.key, pageKey);
+    setOpen(false);
+  }
+
+  function goQuickSelect() {
+    if (lastVisited) {
+      setPage(lastVisited);
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'flex', flexShrink: 0 }}>
+      <button
+        onClick={toggleOpen}
+        style={{ ...tabBtn, display: 'flex', alignItems: 'center', gap: 5 }}
+      >
+        {group.label}
+        <span style={{ fontSize: 8 }}>{open ? '▲' : '▼'}</span>
+        {active && (
+          <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--acc)' }} />
+        )}
+      </button>
+
+      {open && menuPos && (
+        <div style={{
+          position: 'fixed', top: menuPos.top, left: menuPos.left, minWidth: 200, zIndex: 50,
+          background: 'var(--panel)', border: '1px solid var(--line2)',
+        }}>
+          {lastVisited && (
+            <button
+              onClick={goQuickSelect}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', background: 'var(--panel2)', border: 0,
+                borderBottom: '1px solid var(--line2)', color: 'var(--txt2)', fontFamily: 'inherit', fontSize: 10,
+                letterSpacing: '0.05em', padding: '8px 12px', cursor: 'pointer', textTransform: 'uppercase',
+              }}
+            >
+              Schnellauswahl: {labelFor(group, lastVisited)}
+            </button>
+          )}
+          {group.items.map(item => (
+            <button
+              key={item.key}
+              onClick={() => go(item.key)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', background: page === item.key ? 'var(--accsoft)' : 'transparent',
+                border: 0, borderBottom: '1px solid var(--line)', color: 'var(--txt)', fontFamily: 'inherit',
+                fontSize: 11, letterSpacing: '0.04em', padding: '9px 12px', cursor: 'pointer', textTransform: 'uppercase',
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Header({ page, setPage }) {
-  const { theme, toggleTheme, dense, setPro, setSimple } = useApp();
+  const { theme, toggleTheme, dense, setPro, setSimple, lastVisitedByGroup, setLastVisited } = useApp();
   const themeLabel = theme === 'dark' ? 'DUNKEL' : 'HELL';
 
   return (
@@ -32,13 +146,21 @@ export default function Header({ page, setPage }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'stretch', flexShrink: 0 }}>
-          {TABS.map(t => (
-            <button key={t.key} onClick={() => setPage(t.key)} style={tabBtn}>
-              {t.label}
-              {page === t.key && (
-                <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--acc)' }} />
-              )}
-            </button>
+          <button onClick={() => setPage(DASHBOARD_TAB.key)} style={tabBtn}>
+            {DASHBOARD_TAB.label}
+            {page === DASHBOARD_TAB.key && (
+              <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--acc)' }} />
+            )}
+          </button>
+          {GROUPS.map(g => (
+            <GroupDropdown
+              key={g.key}
+              group={g}
+              page={page}
+              setPage={setPage}
+              lastVisitedByGroup={lastVisitedByGroup}
+              setLastVisited={setLastVisited}
+            />
           ))}
         </div>
 
