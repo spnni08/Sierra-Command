@@ -75,6 +75,38 @@ function buildRegistry() {
 
 export const STRATEGY_REGISTRY = buildRegistry();
 
+// crypto_flawless_victory_v2/_v3: unlike every other "(SL)" pairing above
+// (same evaluate(), fixed-vs-trailing exit swap), v2/v3 are genuinely
+// different Pine-side entry/exit logic bundled under one strategy() script
+// (see cryptoFlawlessVictory.js's header comment and the .pine source) — not
+// a trailing-stop variant of the base key. They reuse the SAME evaluate()
+// (the `version` factor already gates v1/v2/v3 generically; the adapter
+// picks which BB/RSI/MFI combination feeds the signal per version — see
+// backtest/adapters.js) and are registered here as their own keys, following
+// this file's existing convention of one registry entry per strategyId
+// string (same key/label/assetClass/evaluate/exit shape as every other
+// entry), rather than looping them through buildRegistry()'s generic
+// base+"_sl" pairing (which would also bolt on a redundant trailing-SL
+// variant that has no Pine equivalent for v2/v3).
+STRATEGY_REGISTRY.crypto_flawless_victory_v2 = {
+  key: 'crypto_flawless_victory_v2',
+  label: `${cryptoFlawlessVictory.label} v2`,
+  assetClass: cryptoFlawlessVictory.assetClass,
+  cooldownMinutes: null,
+  disableShorts: false,
+  evaluate: cryptoFlawlessVictory.evaluate,
+  exit: cryptoFlawlessVictory.V2_EXIT,
+};
+STRATEGY_REGISTRY.crypto_flawless_victory_v3 = {
+  key: 'crypto_flawless_victory_v3',
+  label: `${cryptoFlawlessVictory.label} v3`,
+  assetClass: cryptoFlawlessVictory.assetClass,
+  cooldownMinutes: null,
+  disableShorts: false,
+  evaluate: cryptoFlawlessVictory.evaluate,
+  exit: cryptoFlawlessVictory.V3_EXIT,
+};
+
 export function getStrategy(strategyKey) {
   return STRATEGY_REGISTRY[strategyKey] ?? null;
 }
