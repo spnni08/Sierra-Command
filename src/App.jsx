@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import UpdateAvailableModal from './components/UpdateAvailableModal';
 import MultiChart from './pages/MultiChart';
 import ProTerminal from './pages/ProTerminal';
 import Dashboard from './pages/Dashboard';
@@ -34,6 +35,7 @@ function Shell() {
       </div>
 
       <Footer />
+      <UpdateAvailableModal />
     </div>
   );
 }
