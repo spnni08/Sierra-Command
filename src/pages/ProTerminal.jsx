@@ -22,6 +22,8 @@ const BACKTESTABLE_STRATEGY_IDS = new Set([
   'crypto_ichimoku_breakout', 'crypto_ichimoku_breakout_sl',
   'crypto_sr_exclusion', 'crypto_sr_exclusion_sl',
   'crypto_sr_bollinger', 'crypto_sr_bollinger_sl', // partial adapter — flagged via the run response's partialAdapter field, not here
+  'crypto_mfi_engulfing', 'crypto_mfi_engulfing_sl', // partial adapter (real /ohlc candles, but this backtest's own engulfing-pattern geometry — see adapters.js)
+  'crypto_holy_grail_adx_sma_bb', 'crypto_holy_grail_adx_sma_bb_sl', // partial adapter (real /ohlc candles + wick-touch, but this backtest's own hammer/doji/engulfing geometry — see adapters.js)
 ]);
 
 // All backtestable strategies are crypto-only today (see adapters.js), and
