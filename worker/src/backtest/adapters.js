@@ -26,14 +26,24 @@
 //     fetchCryptoCandles. See that function's comment for the full
 //     picture, including why MFI needs a second (volume) fetch merged in —
 //     /ohlc alone has no volume field at all.
-//   - crypto_sr_volume: needs true Volume Profile (VAL/VAH/POC from
-//     intrabar volume-at-price distribution) — CoinGecko's daily aggregate
-//     volume is one number per day, no price distribution to build that
-//     from.
-//   - crypto_ict_smc: BOS/CHoCH/order-block/FVG swing-structure detection —
-//     by the strategy module's own comment, this logic lives exclusively in
-//     Pine/backtest/ict_smc as the reference spec; not re-derivable from
-//     close-only candles.
+//   - crypto_sr_volume used to be listed here too: its native factor needs
+//     true Volume Profile (VAL/VAH/POC from intrabar volume-at-price
+//     distribution), which CoinGecko's daily aggregate volume genuinely
+//     can't provide. buildCryptoSrVolume below implements it instead via
+//     "Support & Resistance Dynamic" (LuxAlgo) — the same substitute the
+//     companion tradingview-bot repo's backtest/config.py switched to on
+//     2026-07-24 for exactly this reason, since S&R Dynamic only needs
+//     price levels (real high/low + close), not a volume distribution. See
+//     srDynamicAdapter.js.
+//   - crypto_ict_smc used to be listed here too: BOS/CHoCH/order-block/FVG
+//     swing-structure detection needs real per-bar high/low, undetectable
+//     on flat /market_chart OHLC. buildCryptoIctSmc below implements it
+//     using real O/H/L/C from CoinGecko's /ohlc (fetchCryptoRealOhlcCandles,
+//     same source crypto_mfi_engulfing/crypto_holy_grail_adx_sma_bb use),
+//     porting the same swing/BOS/CHoCH/order-block/FVG algorithms validated
+//     by 40 passing tests in tradingview-bot/backtest/ict_smc/concepts.py.
+//     See ictSmcAdapter.js for exactly what's simplified (single-timeframe,
+//     no HTF zones/session gate/SMT divergence — see PARTIAL_ADAPTERS).
 //   - crypto_flawless_victory used to be listed here too (long-only,
 //     signal-closed position — no engine support for that). engine.js now
 //     has an opt-in exit.mode:'signal' path (see its header comment) and
@@ -45,6 +55,8 @@
 //     a parallel fixed SL/TP bracket, whichever hits first, using
 //     engine.js's exit.mode:'signal_or_sltp' path.
 import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr, mfi as computeMfi } from './indicators.js';
+import { buildCryptoIctSmc } from './ictSmcAdapter.js';
+import { buildCryptoSrVolume } from './srDynamicAdapter.js';
 
 // Edge-triggered ta.crossunder(close, lowerBand) / ta.crossover(close,
 // upperBand), same convention buildCryptoFlawlessVictoryV1 already uses:
@@ -694,6 +706,18 @@ export const ADAPTER_WARMUP_BARS = {
   crypto_mfi_engulfing_sl: 20,
   crypto_holy_grail_adx_sma_bb: 50,
   crypto_holy_grail_adx_sma_bb_sl: 50,
+  // crypto_ict_smc: swing confirmation needs swingRight(5) trailing bars, ATR(14)
+  // needs ~3x its period (Wilder smoothing, see indicators.js's atr()) before its
+  // first finite value — buffered above that minimum.
+  crypto_ict_smc: 45,
+  crypto_ict_smc_sl: 45,
+  // crypto_sr_volume: ATR(50) (SR_ATR_LEN, matches the Python sr_dynamic() default)
+  // produces its first finite value at bar index 50 exactly (see indicators.js's
+  // atr()) — buffered slightly above that. Also EMA(200)'s trend filter never
+  // clears on /ohlc's much shorter series, so this adapter's ema200_trend_filter
+  // factor simply won't fire on real /ohlc-backed backtests; see ADAPTER_METADATA.
+  crypto_sr_volume: 55,
+  crypto_sr_volume_sl: 55,
 };
 
 // Informational only (see candles.js's OHLC_DAYS_BUCKETS/pickOhlcDaysBucket
@@ -715,6 +739,10 @@ export const ADAPTER_METADATA = {
   crypto_mfi_engulfing_sl: { maxWindowDays: 365 },
   crypto_holy_grail_adx_sma_bb: { maxWindowDays: 365, note: 'requested windows resolving to CoinGecko /ohlc days=90 or days=180 buckets fail warmup — see ADAPTER_WARMUP_BARS comment' },
   crypto_holy_grail_adx_sma_bb_sl: { maxWindowDays: 365, note: 'requested windows resolving to CoinGecko /ohlc days=90 or days=180 buckets fail warmup — see ADAPTER_WARMUP_BARS comment' },
+  crypto_ict_smc: { maxWindowDays: 365, note: 'swing confirmation needs 5 trailing bars plus ATR(14) warmup — clears every /ohlc bucket except the very shortest (days=1)' },
+  crypto_ict_smc_sl: { maxWindowDays: 365, note: 'swing confirmation needs 5 trailing bars plus ATR(14) warmup — clears every /ohlc bucket except the very shortest (days=1)' },
+  crypto_sr_volume: { maxWindowDays: 365, note: 'ATR(50)+EMA(50) warmup (55 bars) only clears the days=365 bucket (~92 four-day bars) — days=90 (23 bars) and days=180 (45 bars) fail with insufficient_candle_history' },
+  crypto_sr_volume_sl: { maxWindowDays: 365, note: 'ATR(50)+EMA(50) warmup (55 bars) only clears the days=365 bucket (~92 four-day bars) — days=90 (23 bars) and days=180 (45 bars) fail with insufficient_candle_history' },
 };
 
 export const ADAPTERS = {
@@ -742,6 +770,10 @@ export const ADAPTERS = {
   crypto_mfi_engulfing_sl: buildCryptoMfiEngulfing,
   crypto_holy_grail_adx_sma_bb: buildCryptoHolyGrailAdxSmaBb,
   crypto_holy_grail_adx_sma_bb_sl: buildCryptoHolyGrailAdxSmaBb,
+  crypto_ict_smc: buildCryptoIctSmc,
+  crypto_ict_smc_sl: buildCryptoIctSmc,
+  crypto_sr_volume: buildCryptoSrVolume,
+  crypto_sr_volume_sl: buildCryptoSrVolume,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
@@ -752,6 +784,10 @@ const ENGULFING_PATTERN_CAVEAT =
   'Uses this backtest\'s own standard engulfing-pattern definition (2-bar body containment) — the original Pine source (a different, private repo) is not available to this project to match its exact geometry against.';
 const HOLY_GRAIL_PATTERN_CAVEAT =
   'Wick-touch-inside-band criterion uses real O/H/L/C (CoinGecko /ohlc), faithful to the Pine intent. Hammer/doji/engulfing pattern detection uses this backtest\'s own standard technical-analysis definitions — the original Pine source (a different, private repo) is not available to this project to match its exact geometry against.';
+const ICT_SMC_CAVEAT =
+  'Swing/BOS-CHoCH/order-block/FVG detection ports the algorithms validated in tradingview-bot/backtest/ict_smc/concepts.py, on real O/H/L/C from CoinGecko /ohlc. Simplified to a single timeframe: no separate HTF (4H/1H) key-level zones or London/NY session gate (htf_zone_touch is approximated as "price is inside an active LTF order block or FVG of the requested direction"), and no SMT divergence leg (needs a second correlated symbol\'s aligned swings) — confirmations_count only counts {bos, ob}, still gated at min_confirmations=2 so both must fire together.';
+const SR_DYNAMIC_CAVEAT =
+  'Uses "Support & Resistance Dynamic" (LuxAlgo) instead of this strategy\'s originally-intended true Volume Profile (VAL/VAH/POC) — same substitute tradingview-bot/backtest/config.py adopted on 2026-07-24 for the same reason: Volume Profile needs intrabar volume-at-price distribution CoinGecko\'s daily aggregate volume can\'t provide, while S&R Dynamic only needs real high/low/close (from CoinGecko /ohlc). The trend filter also reads EMA(50), not EMA(200) — a true EMA(200) never produces a finite value on /ohlc\'s much shorter real-candle series (see ADAPTER_WARMUP_BARS).';
 export const PARTIAL_ADAPTERS = {
   crypto_sr_bollinger:
     'Real Pine trigger needs a wick to pierce the Bollinger band while the close stays inside (true intrabar bounce). This backtest uses daily close-only candles (no real intrabar range), so a close-only 2-bar cross-back-inside-the-band proxy is used instead — same "rejection then reclaim" idea, but triggers on different/fewer bars than the real intrabar strategy would.',
@@ -761,6 +797,10 @@ export const PARTIAL_ADAPTERS = {
   crypto_mfi_engulfing_sl: ENGULFING_PATTERN_CAVEAT,
   crypto_holy_grail_adx_sma_bb: HOLY_GRAIL_PATTERN_CAVEAT,
   crypto_holy_grail_adx_sma_bb_sl: HOLY_GRAIL_PATTERN_CAVEAT,
+  crypto_ict_smc: ICT_SMC_CAVEAT,
+  crypto_ict_smc_sl: ICT_SMC_CAVEAT,
+  crypto_sr_volume: SR_DYNAMIC_CAVEAT,
+  crypto_sr_volume_sl: SR_DYNAMIC_CAVEAT,
 };
 
 export function getAdapter(strategyId) {
