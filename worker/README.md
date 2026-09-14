@@ -31,6 +31,46 @@ account from WAVESCOUT (so D1's daily quota isn't shared).
   Vantage, resetting daily — a `502 alphavantage_api_error` with a `Note`/
   `Information` field is that quota, not a bug.
 
+## TradingView webhooks: `POST /webhook/<strategy-id>`
+
+Signal ingestion for the 22 WAVESCOUT strategies in `src/strategies/` (11
+base strategies, each with a fixed-exit key and a trailing-SL `_sl` key —
+see `src/strategies/index.js`). Point a TradingView alert at
+`/webhook/<strategy-id>` with a JSON payload (`symbol`, `direction`,
+`price`/`close`, and whatever indicator fields that strategy's factor
+checks read).
+
+**Only one alert per base strategy is needed.** A hit on the fixed-variant
+endpoint (e.g. `/webhook/crypto_baseline`) evaluates the signal once and,
+if it passes, opens **both** trades in the same call: the fixed-exit trade
+(`crypto_baseline`) and the paired trailing-SL trade (`crypto_baseline_sl`,
+reusing that variant's already-registered trailing-exit config — ATR for
+most strategies, or the per-strategy anchor: `crypto_ict_smc` uses the last
+HL/LH swing point, `crypto_sr_bollinger` the Bollinger edge,
+`crypto_sr_exclusion` the S&R zone, `crypto_ichimoku_breakout` the Kumo
+edge). You no longer need to separately configure a `_sl` alert for these
+— see `src/routes/webhook.js`'s `processWebhook` for the fan-out logic.
+
+Exceptions, where a fixed endpoint does **not** fan out and you do still
+need your own alert per key:
+
+- `crypto_flawless_victory` (v1) has no SL/TP at all in the original Pine
+  source (its only exit is the opposing signal) — there's no `_sl` variant
+  to pair with, so `/webhook/crypto_flawless_victory` opens a single
+  signal-only-exit trade, unchanged.
+- `crypto_flawless_victory_v2` and `_v3` are **not** `_sl` variants of the
+  base strategy — they're independently registered strategy keys with
+  their own entry/exit logic (a parallel fixed SL/TP bracket alongside the
+  signal-close exit). Each needs its own TradingView alert
+  (`/webhook/crypto_flawless_victory_v2`, `/webhook/crypto_flawless_victory_v3`)
+  if you want to trade them; neither fans out and neither has a `_sl` pair.
+
+Hitting a `_sl` endpoint **directly** (e.g.
+`/webhook/crypto_baseline_sl`) still works exactly as before — a single
+trailing-exit trade, no fan-out — for backwards compatibility with any
+alert still configured that way, but it's no longer the recommended setup;
+point new alerts at the fixed endpoint instead.
+
 ## Deploy
 
 Deploys automatically via `.github/workflows/worker-deploy.yml` on every
