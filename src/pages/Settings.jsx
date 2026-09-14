@@ -44,8 +44,30 @@ function fmtDe(ts) {
   return `${d}.${m}.${y}`;
 }
 
+function ToggleRow({ label, checked, onChange }) {
+  return (
+    <div style={{ background: 'var(--panel)', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ fontSize: 12, flex: 1 }}>{label}</div>
+      <button
+        onClick={() => onChange(!checked)}
+        role="switch"
+        aria-checked={checked}
+        style={{
+          width: 36, height: 18, borderRadius: 0, border: '1px solid var(--line2)', cursor: 'pointer',
+          background: checked ? 'var(--acc)' : 'var(--panel3)', position: 'relative', padding: 0, flexShrink: 0,
+        }}
+      >
+        <span style={{
+          position: 'absolute', top: 1, left: checked ? 19 : 1, width: 14, height: 14, background: '#fff',
+          transition: 'left 0.15s ease',
+        }} />
+      </button>
+    </div>
+  );
+}
+
 export default function Settings() {
-  const { settingsUnlocked, unlockSettings, lockSettings } = useApp();
+  const { settingsUnlocked, unlockSettings, lockSettings, tradeNotificationsEnabled, setTradeNotifications } = useApp();
   const [pinValue, setPinValue] = useState('');
   const [pinError, setPinError] = useState(false);
 
@@ -119,6 +141,13 @@ export default function Settings() {
       <StatusPanel loading={credentialsQ.loading} error={credentialsQ.error} onRetry={credentialsQ.reload} />
 
       {!credentialsQ.loading && !credentialsQ.error && (<>
+      <div style={{ background: 'var(--panel)', padding: '8px 16px', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase', borderTop: '2px solid var(--line2)' }}>Benachrichtigungen</div>
+      <ToggleRow
+        label="Trade-Benachrichtigungen"
+        checked={tradeNotificationsEnabled}
+        onChange={setTradeNotifications}
+      />
+
       <div style={{ background: 'var(--panel)', padding: '8px 16px', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase', borderTop: '2px solid var(--line2)' }}>Demo</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 1, background: 'var(--line)' }}>
         <ConnectionCard

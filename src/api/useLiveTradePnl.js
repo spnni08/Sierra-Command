@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchCryptoPrices, fetchForexIndexPrices } from './client';
 import { normalizeSymbol } from '../lib/symbols';
+import { useApp } from '../context/AppContext';
+import { pushTradeToast } from '../lib/tradeToastStore';
 
 const POLL_INTERVAL_MS = 20_000;
 
@@ -38,6 +40,21 @@ function pnlFor(direction, entry, currentPrice, volume) {
  */
 export function useLiveTradePnl(trades) {
   const [prices, setPrices] = useState({}); // symbol -> price|null, across both asset classes
+  const { tradeNotificationsEnabled } = useApp();
+
+  // Snapshot of the open trades seen on the previous render, keyed by id —
+  // this is how open/close events are detected: a trade present now but not
+  // in the previous snapshot just opened; one present before but missing
+  // now just closed. This piggybacks on the same open-trades list this hook
+  // already receives every poll (see callers in ProTerminal/LogPage), so it
+  // doesn't stand up a second parallel polling loop.
+  const prevTradesRef = useRef(new Map());
+  // Last pnl seen for each trade id while it was still open — read from
+  // here (not from the current render's `result`) when a trade closes,
+  // since by the render where it disappears from `trades` there's no price
+  // lookup left to compute it from.
+  const lastPnlRef = useRef(new Map());
+  const isFirstRunRef = useRef(true);
 
   // Only the distinct (symbol, assetClass) pairs actually need to be part of
   // the effect's dependency identity — re-running the poll loop just because
@@ -82,6 +99,44 @@ export function useLiveTradePnl(trades) {
       ? null
       : pnlFor(t.direction, t.entry, price, t.volume);
     result.set(t.id, { pnl, price });
+    lastPnlRef.current.set(t.id, pnl);
   }
+
+  // Fire open/close toasts by diffing this render's open trades against the
+  // previous one. Runs as an effect (not inline) so it fires exactly once
+  // per actual trades-list change rather than once per render.
+  const tradeIds = trades.map(t => t.id).sort().join(',');
+  useEffect(() => {
+    if (!tradeNotificationsEnabled) {
+      prevTradesRef.current = new Map(trades.map(t => [t.id, t]));
+      return;
+    }
+    const prev = prevTradesRef.current;
+    const current = new Map(trades.map(t => [t.id, t]));
+
+    // Don't announce every already-open trade as "just opened" on first
+    // mount — only real transitions after that count.
+    if (isFirstRunRef.current) {
+      isFirstRunRef.current = false;
+      prevTradesRef.current = current;
+      return;
+    }
+
+    for (const [id, t] of current) {
+      if (!prev.has(id)) {
+        pushTradeToast({ kind: 'open', symbol: normalizeSymbol(t.symbol), direction: t.direction });
+      }
+    }
+    for (const [id, t] of prev) {
+      if (!current.has(id)) {
+        const pnl = lastPnlRef.current.get(id) ?? null;
+        pushTradeToast({ kind: 'close', symbol: normalizeSymbol(t.symbol), direction: t.direction, pnl });
+        lastPnlRef.current.delete(id);
+      }
+    }
+    prevTradesRef.current = current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradeIds, tradeNotificationsEnabled]);
+
   return result;
 }
