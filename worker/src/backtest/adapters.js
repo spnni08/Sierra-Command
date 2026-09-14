@@ -26,15 +26,14 @@
 //     by the strategy module's own comment, this logic lives exclusively in
 //     Pine/backtest/ict_smc as the reference spec; not re-derivable from
 //     close-only candles.
-//   - crypto_flawless_victory: its BB/RSI/MFI indicators ARE derivable, but
-//     the real Pine strategy is long-only (its "Sell" trigger closes the
-//     long position via strategy.close, never opens a short — confirmed in
-//     both the Pine source and worker.js, which sends direction:"LONG" for
-//     both Buy and Sell payloads). This backtest engine only models
-//     symmetric long/short entries held to a fixed SL/TP — it has no
-//     "opposite signal closes the position early" mechanism, so faithfully
-//     backtesting this strategy needs an engine change, not a data
-//     workaround; forcing "Sell" into a short entry would misrepresent it.
+//   - crypto_flawless_victory used to be listed here too (long-only,
+//     signal-closed position — no engine support for that). engine.js now
+//     has an opt-in exit.mode:'signal' path (see its header comment) and
+//     this file implements the adapter below for v1, the strategy's default
+//     active variant. v2/v3 (signal-close AND a parallel fixed SL/TP,
+//     whichever hits first — a genuinely different exit-mode combination
+//     from v1's signal-only exit) are NOT implemented — see
+//     buildCryptoFlawlessVictoryV1's comment.
 import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr } from './indicators.js';
 
 function buildCryptoBaseline(candles) {
@@ -369,6 +368,70 @@ function buildCryptoSrExclusion(candles) {
   };
 }
 
+// crypto_flawless_victory v1 — the strategy's default-active variant (Pine
+// inputs: v1=true, v2=false, v3=false). Long-only, edge-triggered BB1(20,1.0)
+// cross + RSI(14, Wilder RMA) guard entry, closed ONLY by the mirror-image
+// Sell_1 cross signal — genuinely no SL/TP in the Pine source (pyramiding=0,
+// no strategy.exit() call at all under `if v1`). Returns the
+// {signalAt, closeSignalAt} shape engine.js's exit.mode:'signal' path
+// expects, rather than the legacy bare-function shape every other adapter
+// here returns.
+//
+// v2/v3 are NOT implemented: unlike v1, they close via BOTH a signal
+// (strategy.close, same crossover pattern but different RSI/MFI guards) AND
+// a parallel strategy.exit() with a fixed stop/limit — whichever of
+// {signal-close, SL hit, TP hit} happens first on a bar is the real exit.
+// That is a different exit-mode combination (signal-OR-SL/TP) than v1's
+// signal-only mode, and out of scope for this pass; see the Pine source's
+// own header comment for the exact v2 (3.5%/5.0%) and v3 (4.0%/5.5%)
+// parameters if this is picked up later.
+function buildCryptoFlawlessVictoryV1(candles) {
+  const closes = candles.map((c) => c.close);
+  const rsi14 = rsi(closes, 14);
+  const { upper: upper1, lower: lower1 } = bollingerBands(closes, 20, 1.0);
+
+  const RSI_LOWER_1 = 42;
+  const RSI_UPPER_1 = 70;
+
+  // Edge-triggered crosses (ta.crossunder/ta.crossover): must fire ONLY on
+  // the bar where the cross happens, not on every bar price stays beyond the
+  // band — needs the previous bar's close/band relationship, hence i>=1.
+  const crossUnder = new Array(closes.length).fill(false); // close crosses from >= lower1 to < lower1
+  const crossOver = new Array(closes.length).fill(false); // close crosses from <= upper1 to > upper1
+  for (let i = 1; i < closes.length; i++) {
+    if (!Number.isFinite(lower1[i]) || !Number.isFinite(lower1[i - 1]) || !Number.isFinite(upper1[i]) || !Number.isFinite(upper1[i - 1]))
+      continue;
+    crossUnder[i] = closes[i - 1] >= lower1[i - 1] && closes[i] < lower1[i];
+    crossOver[i] = closes[i - 1] <= upper1[i - 1] && closes[i] > upper1[i];
+  }
+
+  const buy1 = closes.map((_, i) => crossUnder[i] && Number.isFinite(rsi14[i]) && rsi14[i] > RSI_LOWER_1);
+  const sell1 = closes.map((_, i) => crossOver[i] && Number.isFinite(rsi14[i]) && rsi14[i] > RSI_UPPER_1);
+
+  function signalAt(i, direction) {
+    // Long-only: the Pine source never opens a short (Sell_1 closes the
+    // existing long via strategy.close, it's not a short entry) — so no
+    // short signal is ever emitted here.
+    if (direction !== 'long') return null;
+    if (i < 1 || !Number.isFinite(rsi14[i]) || !Number.isFinite(upper1[i]) || !Number.isFinite(lower1[i])) return null;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      version: 'v1',
+      bb_buy_trigger: buy1[i],
+      bb_sell_trigger: false,
+      rsi: rsi14[i],
+    };
+  }
+
+  function closeSignalAt(i) {
+    return !!sell1[i];
+  }
+
+  return { signalAt, closeSignalAt };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
@@ -382,6 +445,12 @@ export const ADAPTERS = {
   crypto_ichimoku_breakout_sl: buildCryptoIchimokuBreakout,
   crypto_sr_exclusion: buildCryptoSrExclusion,
   crypto_sr_exclusion_sl: buildCryptoSrExclusion,
+  crypto_flawless_victory: buildCryptoFlawlessVictoryV1,
+  // crypto_flawless_victory_sl (the trailing-SL "(SL)" registry variant) is
+  // intentionally NOT registered here: v1 genuinely has no SL/TP in the Pine
+  // source, and bolting a synthetic ATR trailing stop onto it would be
+  // exactly the "invent an SL/TP that isn't in the source" this port must
+  // not do. It stays no_indicator_adapter.
 };
 
 // Strategies whose adapter above is a documented simplification rather than
