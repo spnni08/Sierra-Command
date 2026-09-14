@@ -4,6 +4,9 @@ import TradingViewWidget from '../components/TradingViewWidget';
 import { STRATEGY_SUGGESTIONS, SIGNAL_FACTORS, MULTI_CHART_TILES } from '../data/mockData';
 import { fetchBacktestRuns, fetchStrategies, fetchTrades, runBacktest } from '../api/client';
 import { useFetch } from '../api/useFetch';
+import { useLiveTradePnl } from '../api/useLiveTradePnl';
+import { pnlDisplay, fmtPnlNum } from '../lib/pnlFormat';
+import { normalizeSymbol } from '../lib/symbols';
 import StatusPanel from '../api/StatusPanel';
 
 // Strategy IDs with a real or partial indicator adapter in
@@ -53,11 +56,26 @@ function fmtEntryNum(v, dec = 2) {
   return Number(v).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
-function fmtSignedPnl(trades) {
-  const withPnl = trades.map(t => parseDeNum(t.pnl.replace('−', '-'))).filter(Number.isFinite);
-  if (withPnl.length === 0) return '—';
-  const sum = withPnl.reduce((a, b) => a + b, 0);
-  return (sum >= 0 ? '+' : '−') + Math.abs(sum).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+// Sums only the trades a live price was actually resolved for — an open
+// position with no live source (per useLiveTradePnl) contributes nothing
+// rather than being silently treated as 0, since that would understate a
+// mixed open-P/L total without saying so.
+function liveSum(livePnlValues) {
+  const withPnl = livePnlValues.filter(Number.isFinite);
+  if (withPnl.length === 0) return null;
+  return withPnl.reduce((a, b) => a + b, 0);
+}
+
+function fmtSignedLivePnlTotal(livePnlValues) {
+  const sum = liveSum(livePnlValues);
+  return sum === null ? '—' : fmtPnlNum(sum) + ' €';
+}
+
+function liveTotalColor(trades, livePnl) {
+  const sum = liveSum(trades.map(t => livePnl.get(t.id)?.pnl));
+  if (sum === null) return 'var(--txt)';
+  if (sum === 0) return 'var(--txt)';
+  return sum > 0 ? 'var(--pos)' : 'var(--neg)';
 }
 
 function fmtOpenDuration(openedAt) {
@@ -66,26 +84,21 @@ function fmtOpenDuration(openedAt) {
   return hrs.toFixed(2).replace('.', ',') + ' h';
 }
 
-// The rest of the app (strategy asset_classes, backtest symbols, the
-// symbol tile bar) consistently uses no-separator symbols (EURUSD,
-// BTCUSDT, SPX500). Some seeded/real trades rows carry EUR_USD instead —
-// normalized for display only, not rewritten in the DB, since that's a
-// display-layer inconsistency, not a trade-identity change.
-function normalizeSymbol(sym) {
-  return String(sym ?? '').replace(/_/g, '');
-}
 
 function toOpenTradeRow(t) {
   return {
+    id: t.id,
     symbol: normalizeSymbol(t.symbol),
+    direction: t.direction,
+    entry: t.entry,
+    volume: t.volume,
     dir: t.direction === 'long' ? 'LONG' : 'SHORT',
     vol: fmtEntryNum(t.volume, 2),
-    entry: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
+    entryFmt: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
     sl: fmtEntryNum(t.sl, t.sl < 50 ? 5 : 2),
     tp: fmtEntryNum(t.tp, t.tp < 50 ? 5 : 2),
     strategy: '—', // trades.signal_id -> signals -> strategies join not wired yet
     duration: fmtOpenDuration(t.opened_at),
-    pnl: t.pnl === null || t.pnl === undefined ? '—' : (t.pnl >= 0 ? '+' : '−') + fmtEntryNum(Math.abs(t.pnl), 2),
   };
 }
 
@@ -208,10 +221,12 @@ export default function ProTerminal() {
   const loadOpenTrades = useCallback(() => fetchTrades('open'), []);
   const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades]);
   const trades = useMemo(() => (openTradesQ.data || []).map(toOpenTradeRow), [openTradesQ.data]);
-  const primaryTrade = trades[0] ?? { entry: '—', tp: '—', sl: '—', strategy: '—', pnl: '—', duration: '—' };
-  const entryNum = parseDeNum(primaryTrade.entry);
+  const livePnl = useLiveTradePnl(trades);
+  const primaryTrade = trades[0] ?? { id: null, entry: NaN, entryFmt: '—', tp: '—', sl: '—', strategy: '—', duration: '—' };
+  const entryNum = primaryTrade.entry;
   const tpPct = fmtSignedPct((parseDeNum(primaryTrade.tp) - entryNum) / entryNum);
   const slPct = fmtSignedPct((parseDeNum(primaryTrade.sl) - entryNum) / entryNum);
+  const primaryPnl = pnlDisplay(livePnl.get(primaryTrade.id)?.pnl);
 
   const loadBacktests = useCallback(() => fetchBacktestRuns(), []);
   const backtestQ = useFetch(loadBacktests, [loadBacktests]);
@@ -296,11 +311,11 @@ export default function ProTerminal() {
               Entry/SL/TP are shown here as a badge row instead — values pulled from the
               same "Aktuelle Trades" table below (primaryTrade), never re-entered. */}
           <div style={{ display: 'flex', gap: 16, padding: '5px 9px', borderTop: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, background: 'var(--panel2)', flexWrap: 'wrap' }}>
-            <div style={{ color: 'var(--txt2)' }}>EINSTIEG <span style={{ color: 'var(--txt)' }}>{primaryTrade.entry}</span></div>
+            <div style={{ color: 'var(--txt2)' }}>EINSTIEG <span style={{ color: 'var(--txt)' }}>{primaryTrade.entryFmt}</span></div>
             <div style={{ color: 'var(--txt2)' }}>TP <span style={{ color: 'var(--txt)' }}>{primaryTrade.tp}</span> <span style={{ color: 'var(--txt3)' }}>({tpPct})</span></div>
             <div style={{ color: 'var(--txt2)' }}>SL <span style={{ color: 'var(--txt)' }}>{primaryTrade.sl}</span> <span style={{ color: 'var(--txt3)' }}>({slPct})</span></div>
             <div style={{ color: 'var(--txt2)' }}>STRATEGIE <span style={{ color: 'var(--txt)' }}>{primaryTrade.strategy}</span></div>
-            <div style={{ color: 'var(--txt2)' }}>P/L <span style={{ color: 'var(--txt)' }}>{primaryTrade.pnl}</span></div>
+            <div style={{ color: 'var(--txt2)' }}>P/L <span style={{ color: primaryPnl.color, fontWeight: 600 }}>{primaryPnl.text}</span></div>
             <div style={{ flex: 1 }} />
             <div style={{ color: 'var(--txt2)' }}>LAUFZEIT <span style={{ color: 'var(--txt)' }}>{primaryTrade.duration}</span></div>
           </div>
@@ -310,7 +325,10 @@ export default function ProTerminal() {
           <div style={{ display: 'flex', alignItems: 'center', padding: '5px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
             <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Aktuelle Trades</div>
             <div style={{ flex: 1 }} />
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>{trades.length} offen · schwebend <span style={{ color: 'var(--txt)' }}>{fmtSignedPnl(trades)}</span></div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)' }}>
+              {trades.length} offen · schwebend{' '}
+              <span style={{ color: liveTotalColor(trades, livePnl) }}>{fmtSignedLivePnlTotal(trades.map(t => livePnl.get(t.id)?.pnl))}</span>
+            </div>
           </div>
           <StatusPanel loading={openTradesQ.loading} error={openTradesQ.error} onRetry={openTradesQ.reload} />
           {!openTradesQ.loading && !openTradesQ.error && (
@@ -318,15 +336,18 @@ export default function ProTerminal() {
             <div style={{ display: 'grid', gridTemplateColumns: '78px 62px 56px 88px 88px 88px 1fr 84px', padding: '4px 9px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 640 }}>
               <div>SYMBOL</div><div>RICHTUNG</div><div style={{ textAlign: 'right' }}>VOL.</div><div style={{ textAlign: 'right' }}>EINSTIEG</div><div style={{ textAlign: 'right' }}>SL</div><div style={{ textAlign: 'right' }}>TP</div><div style={{ textAlign: 'right' }}>STRATEGIE</div><div style={{ textAlign: 'right' }}>P/L</div>
             </div>
-            {trades.map((t, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: '78px 62px 56px 88px 88px 88px 1fr 84px', padding: '5px 9px', borderBottom: '1px solid var(--line)', minWidth: 640 }}>
-                <div style={{ color: 'var(--txt)' }}>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
-                <div style={{ textAlign: 'right' }}>{t.vol}</div><div style={{ textAlign: 'right' }}>{t.entry}</div>
-                <div style={{ textAlign: 'right' }}>{t.sl}</div><div style={{ textAlign: 'right' }}>{t.tp}</div>
-                <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.strategy}</div>
-                <div style={{ textAlign: 'right', color: 'var(--txt)' }}>{t.pnl}</div>
-              </div>
-            ))}
+            {trades.map((t) => {
+              const pnl = pnlDisplay(livePnl.get(t.id)?.pnl);
+              return (
+                <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '78px 62px 56px 88px 88px 88px 1fr 84px', padding: '5px 9px', borderBottom: '1px solid var(--line)', minWidth: 640 }}>
+                  <div style={{ color: 'var(--txt)' }}>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
+                  <div style={{ textAlign: 'right' }}>{t.vol}</div><div style={{ textAlign: 'right' }}>{t.entryFmt}</div>
+                  <div style={{ textAlign: 'right' }}>{t.sl}</div><div style={{ textAlign: 'right' }}>{t.tp}</div>
+                  <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.strategy}</div>
+                  <div style={{ textAlign: 'right', color: pnl.color, fontWeight: 600 }}>{pnl.text}</div>
+                </div>
+              );
+            })}
           </div>
           )}
         </div>

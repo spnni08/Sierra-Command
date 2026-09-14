@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { fetchTrades, fetchActivityLog, fetchPnlCalendar } from '../api/client';
 import { useFetch } from '../api/useFetch';
+import { useLiveTradePnl } from '../api/useLiveTradePnl';
+import { pnlDisplay } from '../lib/pnlFormat';
 import StatusPanel from '../api/StatusPanel';
 
 // Builds the calendar grid (leading blanks + one cell per day of the month)
@@ -60,16 +62,19 @@ function sourceGroup(source) {
 
 function toRowTrade(t) {
   return {
+    id: t.id,
     symbol: t.symbol,
+    direction: t.direction,
+    entry: t.entry,
+    volume: t.volume,
     dir: t.direction === 'long' ? 'LONG' : 'SHORT',
     vol: fmtNum(t.volume, 2),
-    entry: fmtNum(t.entry, t.entry < 50 ? 5 : 2),
+    entryFmt: fmtNum(t.entry, t.entry < 50 ? 5 : 2),
     sl: fmtNum(t.sl, 2),
     tp: fmtNum(t.tp, 2),
     strategy: '—',
     factor: '—',
     duration: fmtDuration(t.opened_at, t.closed_at),
-    pnl: t.pnl === null || t.pnl === undefined ? '—' : (t.pnl >= 0 ? '+' : '−') + fmtNum(Math.abs(t.pnl), 2),
     source: sourceGroup(t.source),
   };
 }
@@ -133,6 +138,7 @@ export default function LogPage() {
     ? `${MONTH_NAMES[calendarQ.data.month - 1]} ${calendarQ.data.year}`
     : '—';
   const logCount = openTrades.length + activityLog.length;
+  const livePnl = useLiveTradePnl(openTrades);
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -164,17 +170,20 @@ export default function LogPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '4px 10px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
                   <div>SYMBOL</div><div>RICHT.</div><div style={{ textAlign: 'right' }}>VOL.</div><div style={{ textAlign: 'right' }}>EINSTIEG</div><div style={{ textAlign: 'right' }}>SL</div><div style={{ textAlign: 'right' }}>TP</div><div>STRATEGIE</div><div style={{ textAlign: 'right' }}>FAKTOR</div><div style={{ textAlign: 'right' }}>LAUFZEIT</div><div style={{ textAlign: 'right' }}>P/L</div>
                 </div>
-                {openTrades.map((t, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
-                    <div style={{ color: 'var(--txt)' }}>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
-                    <div style={{ textAlign: 'right' }}>{t.vol}</div><div style={{ textAlign: 'right' }}>{t.entry}</div>
-                    <div style={{ textAlign: 'right' }}>{t.sl}</div><div style={{ textAlign: 'right' }}>{t.tp}</div>
-                    <div style={{ color: 'var(--txt2)' }}>{t.strategy}</div>
-                    <div style={{ textAlign: 'right', color: 'var(--acc)' }}>{t.factor}</div>
-                    <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.duration}</div>
-                    <div style={{ textAlign: 'right' }}>{t.pnl}</div>
-                  </div>
-                ))}
+                {openTrades.map((t) => {
+                  const pnl = pnlDisplay(livePnl.get(t.id)?.pnl);
+                  return (
+                    <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
+                      <div style={{ color: 'var(--txt)' }}>{t.symbol}</div><div style={{ color: 'var(--txt2)' }}>{t.dir}</div>
+                      <div style={{ textAlign: 'right' }}>{t.vol}</div><div style={{ textAlign: 'right' }}>{t.entryFmt}</div>
+                      <div style={{ textAlign: 'right' }}>{t.sl}</div><div style={{ textAlign: 'right' }}>{t.tp}</div>
+                      <div style={{ color: 'var(--txt2)' }}>{t.strategy}</div>
+                      <div style={{ textAlign: 'right', color: 'var(--acc)' }}>{t.factor}</div>
+                      <div style={{ textAlign: 'right', color: 'var(--txt2)' }}>{t.duration}</div>
+                      <div style={{ textAlign: 'right', color: pnl.color, fontWeight: 600 }}>{pnl.text}</div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -33,7 +33,73 @@ export async function handleTwelveDataRoute(request, url, env) {
     return getCandles(url, env);
   }
 
+  if (path === '/price' && request.method === 'GET') {
+    return getPrice(request, url, env);
+  }
+
   return Response.json({ error: 'not_found', path }, { status: 404 });
+}
+
+// Live current price for open-trade mark-to-market P/L (frontend polling),
+// distinct from /candles (historical time series for backtesting). Accepts
+// a comma-separated symbol list — Twelve Data's own /price endpoint returns
+// a keyed object for multi-symbol requests, so this passes them through in
+// one upstream call rather than one per open position.
+const PRICE_CACHE_TTL_SECONDS = 20; // conservative — Twelve Data free tier is 800 req/day, 8/min
+
+async function getPrice(request, url, env) {
+  if (!env.TWELVE_DATA_API_KEY) {
+    return Response.json({ status: 'not_configured', provider: 'twelvedata' }, { status: 200 });
+  }
+
+  const symbolsParam = (url.searchParams.get('symbol') || 'EURUSD').toUpperCase();
+  const symbols = [...new Set(symbolsParam.split(',').map((s) => s.trim()).filter(Boolean))];
+
+  const unsupported = symbols.filter((s) => !SYMBOL_MAP[s]);
+  if (unsupported.length > 0) {
+    return Response.json(
+      { error: 'unsupported_symbol', symbol: unsupported.join(','), supported: Object.keys(SYMBOL_MAP) },
+      { status: 400 }
+    );
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(`${url.origin}/twelvedata/price?symbol=${symbols.slice().sort().join(',')}`, request);
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const tdSymbols = symbols.map((s) => SYMBOL_MAP[s]);
+  const upstream = new URL(`${TWELVE_DATA_API}/price`);
+  upstream.searchParams.set('symbol', tdSymbols.join(','));
+  upstream.searchParams.set('apikey', env.TWELVE_DATA_API_KEY);
+
+  const res = await fetch(upstream.toString());
+  if (!res.ok) {
+    return Response.json({ error: 'twelvedata_upstream_error', status: res.status }, { status: 502 });
+  }
+  const data = await res.json();
+
+  if (data.status === 'error') {
+    return Response.json({ error: 'twelvedata_api_error', detail: data }, { status: 502 });
+  }
+
+  // A single-symbol request returns {"price": "..."} directly; a
+  // multi-symbol request returns {"EUR/USD": {"price": "..."}, ...} keyed
+  // by the Twelve Data symbol — normalize both into our own symbol keys.
+  const prices = {};
+  for (const symbol of symbols) {
+    const tdSymbol = SYMBOL_MAP[symbol];
+    const raw = symbols.length === 1 ? data.price : data[tdSymbol]?.price;
+    const price = parseFloat(raw);
+    prices[symbol] = Number.isFinite(price) ? price : null;
+  }
+
+  const response = Response.json(
+    { data: { prices } },
+    { headers: { 'Cache-Control': `public, max-age=${PRICE_CACHE_TTL_SECONDS}` } }
+  );
+  await cache.put(cacheKey, response.clone());
+  return response;
 }
 
 async function getCandles(url, env) {

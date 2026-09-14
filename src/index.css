@@ -13,6 +13,10 @@ a:hover { color: #ff4a60; }
   --acc:#e0243d; --acc2:#93131f; --accsoft:#2a1015;
   --chart:#0c0c0e; --grid:#1a1a1e;
   --up:#a2a2ab; --down:#0d0d10; --downedge:#71717b; --wick:#6c6c75;
+  /* Profit/loss coloring — --neg mirrors --acc (already used for
+     drawdown/loss coloring in Dashboard/ProTerminal); --pos is the equity
+     curve's existing green, now shared by every P/L display. */
+  --pos:#16a34a; --neg:var(--acc);
 }
 [data-theme="light"] {
   --bg:#e9ebee; --panel:#ffffff; --panel2:#f4f5f7; --panel3:#e9ebef;
@@ -21,6 +25,7 @@ a:hover { color: #ff4a60; }
   --acc:#1450c4; --acc2:#0c3894; --accsoft:#dbe6fb;
   --chart:#ffffff; --grid:#e9ecf0;
   --up:#9aa0a8; --down:#14171c; --downedge:#14171c; --wick:#767c85;
+  --pos:#0f8a3c; --neg:#c81e3a;
 }
 
 #root { height: 100vh; }
