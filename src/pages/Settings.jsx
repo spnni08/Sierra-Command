@@ -37,6 +37,36 @@ function ConnectionCard({ title, connected, createdAt, live }) {
   );
 }
 
+// Demo-card placeholder for an exchange whose "demo"/sandbox API doesn't
+// actually simulate order placement — shown instead of a ConnectionCard so
+// nobody wires up credentials expecting real paper trading.
+//
+// Research (Sep 2026):
+//  - MEXC: only offers demo/simulated trading through its web/app UI. There
+//    is no documented sandbox order-placement endpoint on the public MEXC
+//    API — automation is not possible for demo, only for live trading.
+//  - Coinbase: the Advanced Trade API's sandbox environment
+//    (api-sandbox.coinbase.com) returns static/mocked responses rather than
+//    simulating a real matching engine, so an automated "demo" integration
+//    against it wouldn't reflect real order behavior.
+function DemoNotAutomatable({ title, reason }) {
+  return (
+    <div style={{ background: 'var(--panel)', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontWeight: 600, fontSize: 12 }}>{title}</div>
+        <div style={{ flex: 1 }} />
+        <div style={{
+          fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, padding: '1px 6px',
+          color: 'var(--txt3)', border: '1px solid var(--line2)',
+        }}>NICHT VERFÜGBAR</div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--txt2)', lineHeight: 1.5 }}>
+        Keine automatisierte Demo-Anbindung möglich — {reason}
+      </div>
+    </div>
+  );
+}
+
 function fmtDe(ts) {
   if (!ts) return '';
   const [date] = ts.split(' ');
@@ -160,6 +190,30 @@ export default function Settings() {
           connected={!!credentialFor('binance', 'demo')}
           createdAt={fmtDe(credentialFor('binance', 'demo')?.created_at)}
         />
+        {/* BloFin's demo trading environment (demo-trading-openapi.blofin.com)
+            supports full REST/webhook order placement against live market
+            data — same shape as the Kraken/Binance paper card above. */}
+        <ConnectionCard
+          title="BloFin — Demo (Paper)"
+          connected={!!credentialFor('blofin', 'demo')}
+          createdAt={fmtDe(credentialFor('blofin', 'demo')?.created_at)}
+        />
+        {/* Bitget's demo trading REST API (paptrading=1 header, or SUSDT-
+            denominated demo symbols) places real simulated orders — same
+            shape as the Kraken/Binance paper card above. */}
+        <ConnectionCard
+          title="Bitget — Demo (Paper)"
+          connected={!!credentialFor('bitget', 'demo')}
+          createdAt={fmtDe(credentialFor('bitget', 'demo')?.created_at)}
+        />
+        <DemoNotAutomatable
+          title="MEXC — Demo"
+          reason="MEXC bietet Demo-Trading nur über die Web/App-Oberfläche an, keine automatisierbare Sandbox-API zur Orderausführung."
+        />
+        <DemoNotAutomatable
+          title="Coinbase — Demo"
+          reason="Coinbase Advanced Trade Sandbox liefert nur statische/gemockte Antworten, keine echte Order-Simulation."
+        />
       </div>
 
       <div style={{ background: 'var(--acc2)', padding: '8px 16px', fontSize: 10, letterSpacing: '0.1em', color: '#fff', textTransform: 'uppercase', borderTop: '2px solid var(--acc)' }}>Live — Echtes Kapital</div>
@@ -175,6 +229,30 @@ export default function Settings() {
           title="Kraken/Binance — Live-Exchange"
           connected={!!credentialFor('binance', 'live')}
           createdAt={fmtDe(credentialFor('binance', 'live')?.created_at)}
+        />
+        <ConnectionCard
+          live
+          title="MEXC — Live-Exchange"
+          connected={!!credentialFor('mexc', 'live')}
+          createdAt={fmtDe(credentialFor('mexc', 'live')?.created_at)}
+        />
+        <ConnectionCard
+          live
+          title="BloFin — Live-Exchange"
+          connected={!!credentialFor('blofin', 'live')}
+          createdAt={fmtDe(credentialFor('blofin', 'live')?.created_at)}
+        />
+        <ConnectionCard
+          live
+          title="Coinbase — Live-Exchange"
+          connected={!!credentialFor('coinbase', 'live')}
+          createdAt={fmtDe(credentialFor('coinbase', 'live')?.created_at)}
+        />
+        <ConnectionCard
+          live
+          title="Bitget — Live-Exchange"
+          connected={!!credentialFor('bitget', 'live')}
+          createdAt={fmtDe(credentialFor('bitget', 'live')?.created_at)}
         />
       </div>
       </>)}
