@@ -54,7 +54,11 @@ function buildRegistry() {
       cooldownMinutes: mod.cooldownMinutes ?? null,
       disableShorts: mod.disableShorts ?? false,
       evaluate: mod.evaluate,
-      exit: buildExit(mod.exit, mod.trailingStop, 'fixed'),
+      // signalOnlyExit (currently only crypto_flawless_victory's v1) opts
+      // the BASE registry entry only out of the usual fixed %SL/R-TP
+      // bracket — see that module's comment and backtest/engine.js's
+      // exit.mode:'signal' path. The "(SL)" variant below is untouched.
+      exit: mod.signalOnlyExit ? { mode: 'signal' } : buildExit(mod.exit, mod.trailingStop, 'fixed'),
     };
     registry[`${mod.key}_sl`] = {
       key: `${mod.key}_sl`,

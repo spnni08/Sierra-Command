@@ -20,7 +20,14 @@ export const params = {
 };
 
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'atr' };
-export const exit = {}; // v1 uses EXIT_CONFIG defaults; v2/v3 send sl/tp directly in the payload
+export const exit = {}; // unused for the base (signal-only) variant — see signalOnlyExit below; the "(SL)" registry variant still uses this via buildExit()
+// v1 (this strategy's default-active Pine variant, see the .pine source's
+// header) has NO SL/TP at all — its only exit is the Sell_1 signal. Read by
+// worker/src/strategies/index.js to give the base (non-"(SL)") registry
+// entry an exit.mode:'signal' config instead of the usual fixed %SL/R-TP
+// bracket every other strategy gets. v2/v3 (fixed SL/TP alongside a signal
+// close) are not modeled here — see backtest/adapters.js's comment.
+export const signalOnlyExit = true;
 
 const factors = [
   {

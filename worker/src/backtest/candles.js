@@ -40,7 +40,11 @@ async function fetchCryptoCandles(symbol, startDate, endDate, env) {
   upstream.searchParams.set('interval', 'daily');
   if (env.COINGECKO_API_KEY) upstream.searchParams.set('x_cg_demo_api_key', env.COINGECKO_API_KEY);
 
-  const res = await fetch(upstream.toString());
+  // CoinGecko's edge blocks requests with no (or an empty) User-Agent header
+  // with a bare 403 — confirmed while testing this module locally under
+  // `wrangler dev`/workerd, which sends no default UA the way a browser
+  // would. Not a proxy or auth issue; just needs any identifying UA.
+  const res = await fetch(upstream.toString(), { headers: { 'User-Agent': 'SierraCommandBacktest/1.0' } });
   if (!res.ok) throw new Error(`coingecko_upstream_error:${res.status}`);
   const raw = await res.json();
   if (!Array.isArray(raw?.prices)) throw new Error('coingecko_bad_response');

@@ -77,7 +77,7 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       error: 'no_indicator_adapter',
       strategyId,
       message:
-        'This strategy needs data or structure this backtest engine cannot derive: real candlestick body/wick patterns, true Volume Profile, ICT/SMC swing structure, or (crypto_flawless_victory) an engine feature this backtest doesn\'t implement (early exit on an opposite signal). See adapters.js\'s header comment for the exact reason per strategy.',
+        'This strategy needs data or structure this backtest engine cannot derive: real candlestick body/wick patterns, true Volume Profile, or ICT/SMC swing structure. See adapters.js\'s header comment for the exact reason per strategy.',
     };
   }
 
@@ -130,7 +130,16 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
     };
   }
 
-  const signalAt = adapter(candles);
+  // An adapter is normally just signalAt(i, direction) (legacy shape, used
+  // by every fixed/trailing-SL strategy). A strategy that opts into
+  // signal-based exits (see exit.mode === 'signal' below) instead returns
+  // { signalAt, closeSignalAt } — closeSignalAt(i) tells the engine "close
+  // the open position on this bar", independent of any SL/TP. Purely
+  // additive: every existing adapter still returns a bare function and never
+  // touches this path.
+  const built = adapter(candles);
+  const signalAt = typeof built === 'function' ? built : built.signalAt;
+  const closeSignalAt = typeof built === 'function' ? null : built.closeSignalAt ?? null;
   const atrSeries = strategy.exit.mode === 'trailing' ? computeAtr(candles, strategy.exit.trailing.atrLen) : null;
   const volume = VOLUME[upperSymbol] ?? 1;
   const windowStartMs = window.start.getTime();
@@ -140,6 +149,27 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
 
   for (let i = WARMUP_BARS; i < candles.length; i++) {
     const candle = candles[i];
+
+    if (open && strategy.exit.mode === 'signal') {
+      // Signal-only exit mode (e.g. crypto_flawless_victory v1): no SL/TP
+      // at all — the ONLY way out is the adapter's close signal firing.
+      // pyramiding=0 semantics fall out for free here: while `open` is
+      // truthy this loop iteration never reaches the entry-signal block
+      // below, so a Buy signal firing again mid-position is simply ignored,
+      // matching strategy.entry() against an already-open position ID in
+      // Pine.
+      if (closeSignalAt && closeSignalAt(i, open.direction)) {
+        const rawExit = candle.close;
+        const fillExit = exitCost(upperSymbol, assetClass, rawExit, open.direction);
+        let pnl = (open.direction === 'long' ? fillExit - open.entryFill : open.entryFill - fillExit) * volume;
+        if (assetClass === 'crypto') {
+          pnl -= cryptoTakerFee(upperSymbol, open.entryFill * volume) + cryptoTakerFee(upperSymbol, fillExit * volume);
+        }
+        trades.push({ ...open, exitFill: fillExit, exitIndex: i, reason: 'signal', pnl });
+        open = null;
+      }
+      continue;
+    }
 
     if (open) {
       const hitSl = open.direction === 'long' ? candle.low <= open.sl : candle.high >= open.sl;
@@ -177,7 +207,9 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       const rawEntry = candle.close;
       const entryFill = entryCost(upperSymbol, assetClass, rawEntry, direction);
       const { sl, tp } =
-        strategy.exit.mode === 'trailing'
+        strategy.exit.mode === 'signal'
+          ? { sl: null, tp: null } // no SL/TP at all — see the signal-only exit block above
+          : strategy.exit.mode === 'trailing'
           ? initialTrailingExit(entryFill, direction, strategy.exit, atrSeries[i])
           : initialFixedExit(entryFill, direction, strategy.exit);
 
