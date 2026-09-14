@@ -15,17 +15,27 @@
 // ['london', 'new_york', 'overlap']. Overlap is an informational subset
 // already counted inside both London and New York, not a fourth partition.
 //
-// Consequence for anyone summing trade counts across sessions:
-//   asia.trades + london.trades + new_york.trades === total trade count
-//   (Asia/London/NY windows tile the 24h day with no gaps and no overlap
-//   with each other: Asia ends where London begins, London ends where NY
-//   ends; the only overlap is London∩NY, both of which individually already
-//   span the 13:00–16:00 block).
-//   overlap.trades is NOT additive — it is already included in both
-//   london.trades and new_york.trades, so adding it to the three-way sum
-//   would double count those trades. Use overlap.trades only to answer
-//   "how many trades happened specifically during the London/NY overlap
-//   window", never as a fourth term in a total.
+// Asia and London tile the day with no gap and no overlap (Asia ends
+// exactly where London begins, 08:00), but London and New York DO overlap
+// each other directly (both individually already span 13:00–16:00) — that
+// is the whole point of Overlap existing as a category. So a naive
+// three-way sum double-counts every trade opened in 13:00–16:00 UTC:
+//
+//   asia.trades + london.trades + new_york.trades
+//     === total trade count + overlap.trades
+//
+// Equivalently, to recover the true total trade count from the four
+// buckets, SUBTRACT overlap once (it was counted in both london and
+// new_york, so subtracting it once turns that double-count back into a
+// single count — this is just inclusion-exclusion over the two-window
+// union London ∪ New York):
+//
+//   total trade count === asia.trades + london.trades + new_york.trades - overlap.trades
+//
+// overlap.trades itself is never a term to just add on top of the other
+// three — it exists to answer "how many trades happened specifically
+// during the London/NY overlap window", and to let the formula above
+// reconcile the double-count, not as a free-standing fourth quantity.
 export const SESSION_WINDOWS = {
   asia: { label: 'Asia', startHourUtc: 0, endHourUtc: 8 },
   london: { label: 'London', startHourUtc: 8, endHourUtc: 16 },

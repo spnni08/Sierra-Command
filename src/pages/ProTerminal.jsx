@@ -105,7 +105,8 @@ function fmtSignedNum(v) {
 // Display order for the session-breakdown table — matches
 // worker/src/backtest/sessions.js's SESSION_WINDOWS keys. Overlap is shown
 // last and labeled as such since it's an informational subset of
-// London+New York, not a fourth additive bucket (see that file's header).
+// London+New York, not a fourth additive bucket: total trades ===
+// asia + london + new_york - overlap (see that file's header for why).
 const SESSION_BREAKDOWN_ROWS = [
   { key: 'asia', label: 'Asia' },
   { key: 'london', label: 'London' },
