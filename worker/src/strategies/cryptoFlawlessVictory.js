@@ -25,9 +25,25 @@ export const exit = {}; // unused for the base (signal-only) variant — see sig
 // header) has NO SL/TP at all — its only exit is the Sell_1 signal. Read by
 // worker/src/strategies/index.js to give the base (non-"(SL)") registry
 // entry an exit.mode:'signal' config instead of the usual fixed %SL/R-TP
-// bracket every other strategy gets. v2/v3 (fixed SL/TP alongside a signal
-// close) are not modeled here — see backtest/adapters.js's comment.
+// bracket every other strategy gets. v2/v3 (signal-close AND a parallel
+// fixed SL/TP bracket, whichever hits first) are registered as separate
+// crypto_flawless_victory_v2/_v3 keys below, using V2_EXIT/V3_EXIT and
+// engine.js's exit.mode:'signal_or_sltp' — see backtest/adapters.js's
+// buildCryptoFlawlessVictoryV2/V3 for the per-version indicator logic.
 export const signalOnlyExit = true;
+
+// v2/v3 exit parameters, straight from the Pine source's header comment
+// (SL/TP reparametrization, 2026-08-06 decision) — v2stoploss_input/
+// v2takeprofit_input and v3stoploss_input/v3takeprofit_input. Each version
+// closes on BOTH its own signal-close (Sell_2/Sell_3, same edge-triggered
+// crossover pattern as Buy_2/Buy_3) AND a parallel standing SL/TP bracket —
+// whichever hits first wins (see backtest/engine.js's exit.mode:
+// 'signal_or_sltp'). Read by worker/src/strategies/index.js to register
+// crypto_flawless_victory_v2/_v3 as separate registry keys (same evaluate()
+// gate as v1/the base entry — only the `version` factor and the exit config
+// differ per variant).
+export const V2_EXIT = { mode: 'signal_or_sltp', slPct: 3.5, tpPct: 5.0 };
+export const V3_EXIT = { mode: 'signal_or_sltp', slPct: 4.0, tpPct: 5.5 };
 
 const factors = [
   {
