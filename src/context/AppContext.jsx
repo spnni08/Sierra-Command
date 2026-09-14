@@ -3,6 +3,16 @@ import { createContext, useContext, useState, useMemo } from 'react';
 const AppContext = createContext(null);
 
 const TRADE_NOTIFICATIONS_KEY = 'sierra.tradeNotificationsEnabled';
+const LAST_VISITED_KEY = 'sierra.lastVisitedByGroup';
+
+function readLastVisitedByGroup() {
+  try {
+    const raw = localStorage.getItem(LAST_VISITED_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
 
 function readTradeNotificationsSetting() {
   try {
@@ -18,6 +28,19 @@ export function AppProvider({ children }) {
   const [mode, setMode] = useState('pro'); // 'pro' | 'simple'
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
   const [tradeNotificationsEnabled, setTradeNotificationsEnabled] = useState(readTradeNotificationsSetting);
+  const [lastVisitedByGroup, setLastVisitedByGroup] = useState(readLastVisitedByGroup);
+
+  const setLastVisited = (groupKey, pageKey) => {
+    setLastVisitedByGroup(prev => {
+      const next = { ...prev, [groupKey]: pageKey };
+      try {
+        localStorage.setItem(LAST_VISITED_KEY, JSON.stringify(next));
+      } catch {
+        // localStorage unavailable — tracked in-memory only for this session
+      }
+      return next;
+    });
+  };
 
   const setTradeNotifications = (enabled) => {
     setTradeNotificationsEnabled(enabled);
@@ -40,7 +63,9 @@ export function AppProvider({ children }) {
     lockSettings: () => setSettingsUnlocked(false),
     tradeNotificationsEnabled,
     setTradeNotifications,
-  }), [theme, mode, settingsUnlocked, tradeNotificationsEnabled]);
+    lastVisitedByGroup,
+    setLastVisited,
+  }), [theme, mode, settingsUnlocked, tradeNotificationsEnabled, lastVisitedByGroup]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
