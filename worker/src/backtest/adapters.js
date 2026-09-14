@@ -30,11 +30,29 @@
 //     signal-closed position — no engine support for that). engine.js now
 //     has an opt-in exit.mode:'signal' path (see its header comment) and
 //     this file implements the adapter below for v1, the strategy's default
-//     active variant. v2/v3 (signal-close AND a parallel fixed SL/TP,
-//     whichever hits first — a genuinely different exit-mode combination
-//     from v1's signal-only exit) are NOT implemented — see
-//     buildCryptoFlawlessVictoryV1's comment.
-import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr } from './indicators.js';
+//     active variant. v2 (BB2/17, RSI-only guards, registered as
+//     crypto_flawless_victory_v2) and v3 (BB1/20, MFI-entry + RSI-AND-MFI
+//     exit, registered as crypto_flawless_victory_v3) are also implemented
+//     below (buildCryptoFlawlessVictoryV2/V3) — both close via a signal AND
+//     a parallel fixed SL/TP bracket, whichever hits first, using
+//     engine.js's exit.mode:'signal_or_sltp' path.
+import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr, mfi as computeMfi } from './indicators.js';
+
+// Edge-triggered ta.crossunder(close, lowerBand) / ta.crossover(close,
+// upperBand), same convention buildCryptoFlawlessVictoryV1 already uses:
+// fires only on the bar the cross happens (needs the previous bar's
+// close/band relationship), not on every bar price stays beyond the band.
+function crossBands(closes, lower, upper) {
+  const crossUnder = new Array(closes.length).fill(false);
+  const crossOver = new Array(closes.length).fill(false);
+  for (let i = 1; i < closes.length; i++) {
+    if (!Number.isFinite(lower[i]) || !Number.isFinite(lower[i - 1]) || !Number.isFinite(upper[i]) || !Number.isFinite(upper[i - 1]))
+      continue;
+    crossUnder[i] = closes[i - 1] >= lower[i - 1] && closes[i] < lower[i];
+    crossOver[i] = closes[i - 1] <= upper[i - 1] && closes[i] > upper[i];
+  }
+  return { crossUnder, crossOver };
+}
 
 function buildCryptoBaseline(candles) {
   const closes = candles.map((c) => c.close);
@@ -432,6 +450,98 @@ function buildCryptoFlawlessVictoryV1(candles) {
   return { signalAt, closeSignalAt };
 }
 
+// crypto_flawless_victory v2 — BB2(17, 1.0) (NOT BB1/20 — see the Pine
+// source), RSI-only guards on both entry AND exit (single condition each,
+// unlike v3's two-guard exit): Buy_2 = crossunder(close,lower2) && rsi>42,
+// Sell_2 = crossover(close,upper2) && rsi>76. Long-only, same as v1. Closes
+// via BOTH Sell_2 (closeSignalAt below) AND a parallel fixed 3.5%SL/5.0%TP
+// bracket built by engine.js's initialSignalOrSltpExit — see
+// cryptoFlawlessVictory.js's V2_EXIT and engine.js's exit.mode:
+// 'signal_or_sltp' race logic.
+function buildCryptoFlawlessVictoryV2(candles) {
+  const closes = candles.map((c) => c.close);
+  const rsi14 = rsi(closes, 14);
+  const { upper: upper2, lower: lower2 } = bollingerBands(closes, 17, 1.0);
+  const { crossUnder, crossOver } = crossBands(closes, lower2, upper2);
+
+  const RSI_LOWER_2 = 42;
+  const RSI_UPPER_2 = 76;
+
+  const buy2 = closes.map((_, i) => crossUnder[i] && Number.isFinite(rsi14[i]) && rsi14[i] > RSI_LOWER_2);
+  const sell2 = closes.map((_, i) => crossOver[i] && Number.isFinite(rsi14[i]) && rsi14[i] > RSI_UPPER_2);
+
+  function signalAt(i, direction) {
+    if (direction !== 'long') return null;
+    if (i < 1 || !Number.isFinite(rsi14[i]) || !Number.isFinite(upper2[i]) || !Number.isFinite(lower2[i])) return null;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      version: 'v2',
+      bb_buy_trigger: buy2[i],
+      bb_sell_trigger: false,
+      rsi: rsi14[i],
+    };
+  }
+
+  function closeSignalAt(i) {
+    return !!sell2[i];
+  }
+
+  return { signalAt, closeSignalAt };
+}
+
+// crypto_flawless_victory v3 — BB1(20, 1.0), same bands as v1 (NOT BB2 —
+// this is the version-3-specific nuance). Entry gates on MFI (not RSI, unlike
+// v1/v2): Buy_3 = crossunder(close,lower1) && mfi<60. Exit needs BOTH RSI AND
+// MFI to confirm (two-guard AND, unlike v1/v2's single guard): Sell_3 =
+// crossover(close,upper1) && rsi>65 && mfi>64. Long-only. Closes via BOTH
+// Sell_3 AND a parallel fixed 4.0%SL/5.5%TP bracket (V3_EXIT +
+// 'signal_or_sltp', same race logic as v2).
+function buildCryptoFlawlessVictoryV3(candles) {
+  const closes = candles.map((c) => c.close);
+  const rsi14 = rsi(closes, 14);
+  const mfi14 = computeMfi(candles, 14);
+  const { upper: upper1, lower: lower1 } = bollingerBands(closes, 20, 1.0);
+  const { crossUnder, crossOver } = crossBands(closes, lower1, upper1);
+
+  const MFI_LOWER_3 = 60;
+  const RSI_UPPER_3 = 65;
+  const MFI_UPPER_3 = 64;
+
+  const buy3 = closes.map((_, i) => crossUnder[i] && Number.isFinite(mfi14[i]) && mfi14[i] < MFI_LOWER_3);
+  const sell3 = closes.map(
+    (_, i) =>
+      crossOver[i] &&
+      Number.isFinite(rsi14[i]) &&
+      rsi14[i] > RSI_UPPER_3 &&
+      Number.isFinite(mfi14[i]) &&
+      mfi14[i] > MFI_UPPER_3
+  );
+
+  function signalAt(i, direction) {
+    if (direction !== 'long') return null;
+    if (i < 1 || !Number.isFinite(mfi14[i]) || !Number.isFinite(rsi14[i]) || !Number.isFinite(upper1[i]) || !Number.isFinite(lower1[i]))
+      return null;
+    return {
+      direction,
+      close: closes[i],
+      price: closes[i],
+      version: 'v3',
+      bb_buy_trigger: buy3[i],
+      bb_sell_trigger: false,
+      rsi: rsi14[i],
+      mfi: mfi14[i],
+    };
+  }
+
+  function closeSignalAt(i) {
+    return !!sell3[i];
+  }
+
+  return { signalAt, closeSignalAt };
+}
+
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
   crypto_baseline_sl: buildCryptoBaseline,
@@ -451,6 +561,8 @@ export const ADAPTERS = {
   // source, and bolting a synthetic ATR trailing stop onto it would be
   // exactly the "invent an SL/TP that isn't in the source" this port must
   // not do. It stays no_indicator_adapter.
+  crypto_flawless_victory_v2: buildCryptoFlawlessVictoryV2,
+  crypto_flawless_victory_v3: buildCryptoFlawlessVictoryV3,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
