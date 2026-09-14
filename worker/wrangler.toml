@@ -10,13 +10,8 @@ database_id = "11c3404b-faac-429f-bc48-9bd40ba93531"
 [vars]
 ALLOWED_ORIGIN = "https://sierra-command.web.app"
 # Base URL of the WAVESCOUT (tradingview-bot) worker that GET /wavescout/price
-# proxies GET /api/candle-check/latest from — e.g.
-# "https://tradingview-bot.<subdomain>.workers.dev". PLACEHOLDER: the repo
-# owner needs to set the real deployed WAVESCOUT worker URL here (or as a
-# `wrangler secret put WAVESCOUT_API_URL` if it should stay out of source
-# control). Until set, GET /wavescout/price responds with
-# {"status":"not_configured"} instead of erroring.
-WAVESCOUT_API_URL = ""
+# proxies GET /api/candle-check/latest from.
+WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
 
 # Secrets (set via `wrangler secret put <NAME>`, never committed here):
 #   CREDENTIALS_ENCRYPTION_KEY  - base64 AES-256 key for encrypting api_credentials rows
@@ -26,6 +21,3 @@ WAVESCOUT_API_URL = ""
 #                          and the OANDA simulation engine's live prices)
 #   COINGECKO_API_KEY - optional; CoinGecko's free tier works anonymously
 #                        without one, this only raises the rate limit
-#   WAVESCOUT_API_URL - can alternatively be set as a secret instead of the
-#                        plain [vars] entry above, if the owner prefers not
-#                        to commit the URL
