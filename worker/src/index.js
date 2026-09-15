@@ -8,6 +8,7 @@ import { handleWebhookRoute } from './routes/webhook.js';
 import { handleBacktestRoute } from './routes/backtest.js';
 import { handleWavescoutPriceRoute } from './routes/wavescout-price.js';
 import { withCors, handlePreflight } from './cors.js';
+import { checkOpenTrades } from './cron/checkOpenTrades.js';
 
 export default {
   async fetch(request, env) {
@@ -47,5 +48,17 @@ export default {
     }
 
     return withCors(response, request, env);
+  },
+
+  // Scheduled via wrangler.toml [triggers].crons — auto-closes open crypto
+  // (Binance) trades whose SL/TP has been hit. See src/cron/checkOpenTrades.js
+  // for why this is separate from checkOpenSimulatedTrades (OANDA-sim trades
+  // have their own manual/scheduled check and are never touched here).
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      checkOpenTrades(env).catch((err) => {
+        console.error('checkOpenTrades cron failed:', err);
+      })
+    );
   },
 };

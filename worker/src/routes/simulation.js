@@ -5,6 +5,7 @@
 // fill.
 
 import { openSimulatedTrade, checkOpenSimulatedTrades } from '../simulation/execution-engine.js';
+import { checkOpenTrades as checkOpenCryptoTrades } from '../cron/checkOpenTrades.js';
 
 export async function handleSimulationRoute(request, url, env) {
   const path = url.pathname.replace(/^\/simulation/, '');
@@ -15,6 +16,13 @@ export async function handleSimulationRoute(request, url, env) {
 
   if (path === '/oanda/check' && request.method === 'POST') {
     return checkOpenTrades(env);
+  }
+
+  // Manual trigger for the crypto (Binance) SL/TP auto-close job — same job
+  // the scheduled handler (wrangler.toml [triggers]) runs on a timer, exposed
+  // here for on-demand / ops use. See ../cron/checkOpenTrades.js.
+  if (path === '/crypto/check' && request.method === 'POST') {
+    return checkOpenCrypto(env);
   }
 
   return Response.json({ error: 'not_found', path }, { status: 404 });
@@ -42,5 +50,14 @@ async function checkOpenTrades(env) {
     return Response.json({ data: result });
   } catch (err) {
     return Response.json({ error: 'simulation_error', message: err.message }, { status: 500 });
+  }
+}
+
+async function checkOpenCrypto(env) {
+  try {
+    const result = await checkOpenCryptoTrades(env);
+    return Response.json({ data: result });
+  } catch (err) {
+    return Response.json({ error: 'crypto_check_error', message: err.message }, { status: 500 });
   }
 }
