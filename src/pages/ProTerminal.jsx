@@ -8,6 +8,7 @@ import { useLiveTradePnl } from '../api/useLiveTradePnl';
 import { pnlDisplay, fmtPnlNum } from '../lib/pnlFormat';
 import { normalizeSymbol } from '../lib/symbols';
 import StatusPanel from '../api/StatusPanel';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 // Strategy IDs with a real or partial indicator adapter in
 // worker/src/backtest/adapters.js — only these can actually produce a
@@ -81,7 +82,9 @@ function liveTotalColor(trades, livePnl) {
 }
 
 function fmtOpenDuration(openedAt) {
+  if (!openedAt) return '—';
   const start = new Date(openedAt.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(start.getTime())) return '—';
   const hrs = Math.max(0, (new Date() - start) / 3_600_000);
   return hrs.toFixed(2).replace('.', ',') + ' h';
 }
@@ -90,15 +93,15 @@ function fmtOpenDuration(openedAt) {
 function toOpenTradeRow(t) {
   return {
     id: t.id,
-    symbol: normalizeSymbol(t.symbol),
+    symbol: normalizeSymbol(t.symbol ?? ''),
     direction: t.direction,
     entry: t.entry,
     volume: t.volume,
     dir: t.direction === 'long' ? 'LONG' : 'SHORT',
     vol: fmtEntryNum(t.volume, 2),
-    entryFmt: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
-    sl: fmtEntryNum(t.sl, t.sl < 50 ? 5 : 2),
-    tp: fmtEntryNum(t.tp, t.tp < 50 ? 5 : 2),
+    entryFmt: fmtEntryNum(t.entry, Number(t.entry) < 50 ? 5 : 2),
+    sl: fmtEntryNum(t.sl, Number(t.sl) < 50 ? 5 : 2),
+    tp: fmtEntryNum(t.tp, Number(t.tp) < 50 ? 5 : 2),
     strategy: t.strategy_name || '—', // now joined server-side: trades -> signals -> strategies
     duration: fmtOpenDuration(t.opened_at),
   };
@@ -343,6 +346,7 @@ export default function ProTerminal() {
           </div>
         </div>
 
+        <ErrorBoundary>
         <div style={{ background: 'var(--panel)' }}>
           <div style={{ display: 'flex', alignItems: 'center', padding: '5px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
             <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Aktuelle Trades</div>
@@ -373,6 +377,7 @@ export default function ProTerminal() {
           </div>
           )}
         </div>
+        </ErrorBoundary>
       </div>
 
       <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
@@ -455,6 +460,7 @@ export default function ProTerminal() {
         )}
 
         <StatusPanel loading={backtestQ.loading && !manualRun} error={!manualRun ? backtestQ.error : null} onRetry={backtestQ.reload} />
+        <ErrorBoundary message="Backtest-Ergebnisse konnten nicht dargestellt werden — unerwartete oder unvollständige Daten.">
         {!btLoading && (backtestQ.data || manualRun) && !(backtestQ.error && !manualRun) && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--line)', borderBottom: '1px solid var(--line)' }}>
           {metricBox('NETTOGEWINN', displayedMetrics && manualRun.trades ? fmtSignedNetProfit(manualRun.trades) : '—')}
@@ -533,6 +539,7 @@ export default function ProTerminal() {
             </div>
           </>
         )}
+        </ErrorBoundary>
 
         {/* No real AI/analytics engine generates these suggestions (per PR
             #24's docs — unchanged status) — same treatment as Multi-Chart's
