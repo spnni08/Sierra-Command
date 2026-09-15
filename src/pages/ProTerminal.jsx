@@ -99,7 +99,7 @@ function toOpenTradeRow(t) {
     entryFmt: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
     sl: fmtEntryNum(t.sl, t.sl < 50 ? 5 : 2),
     tp: fmtEntryNum(t.tp, t.tp < 50 ? 5 : 2),
-    strategy: '—', // trades.signal_id -> signals -> strategies join not wired yet
+    strategy: t.strategy_name || '—', // now joined server-side: trades -> signals -> strategies
     duration: fmtOpenDuration(t.opened_at),
   };
 }
@@ -221,7 +221,9 @@ export default function ProTerminal() {
   const activeTile = MULTI_CHART_TILES.find(t => t.sym === activeSym) || MULTI_CHART_TILES[0];
 
   const loadOpenTrades = useCallback(() => fetchTrades('open'), []);
-  const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades]);
+  // Polled (not fetch-once) so a trade opened/closed elsewhere shows up here
+  // without a manual reload — same 20s cadence as the live-price poll.
+  const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades], { pollMs: 20_000 });
   const trades = useMemo(() => (openTradesQ.data || []).map(toOpenTradeRow), [openTradesQ.data]);
   const livePnl = useLiveTradePnl(trades);
   const primaryTrade = trades[0] ?? { id: null, entry: NaN, entryFmt: '—', tp: '—', sl: '—', strategy: '—', duration: '—' };

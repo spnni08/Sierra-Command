@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchCryptoPrices, fetchForexIndexPrices, fetchTrades } from './client';
+import { fetchCryptoPrices, fetchForexIndexPrices } from './client';
 import { normalizeSymbol } from '../lib/symbols';
-import { useApp } from '../context/AppContext';
-import { pushTradeToast } from '../lib/tradeToastStore';
 
 const POLL_INTERVAL_MS = 20_000;
 
@@ -13,7 +11,7 @@ const POLL_INTERVAL_MS = 20_000;
 const CRYPTO_SYMBOLS = new Set(['BTC', 'BTCUSDT', 'ETH', 'ETHUSDT', 'SOL', 'SOLUSDT']);
 const FOREX_INDEX_SYMBOLS = new Set(['EURUSD', 'SP500', 'SPX', 'SPX500', 'NASDAQ', 'NDX', 'NAS100']);
 
-function assetClassFor(symbol) {
+export function assetClassFor(symbol) {
   if (CRYPTO_SYMBOLS.has(symbol)) return 'crypto';
   if (FOREX_INDEX_SYMBOLS.has(symbol)) return 'forex_index';
   return null; // no live price source for this symbol — caller shows "–"
@@ -22,7 +20,7 @@ function assetClassFor(symbol) {
 // Same convention as worker/src/simulation/execution-engine.js's pnlFor —
 // this is a live mark-to-market approximation (no spread/cost model
 // applied), not a prediction of the exact fill price a close would get.
-function pnlFor(direction, entry, currentPrice, volume) {
+export function pnlFor(direction, entry, currentPrice, volume) {
   const diff = direction === 'long' ? currentPrice - entry : entry - currentPrice;
   return diff * volume;
 }
@@ -37,29 +35,26 @@ function pnlFor(direction, entry, currentPrice, volume) {
  * order execution and most forex/index symbols beyond the simulated-OANDA
  * set) or the upstream provider failed/isn't configured — callers render
  * "–" for that rather than freezing a stale value.
+ *
+ * NOTE: open/close trade-notification detection used to be piggybacked onto
+ * this hook's poll loop, which meant toasts only fired while a page that
+ * happened to call this hook (ProTerminal/LogPage) was mounted. That logic
+ * now lives in TradeNotificationsProvider (src/context/TradeNotificationsProvider.jsx),
+ * mounted once at the app shell level with its own always-on poll — this
+ * hook is price/PnL-only.
  */
 export function useLiveTradePnl(trades) {
   const [prices, setPrices] = useState({}); // symbol -> price|null, across both asset classes
-  const { tradeNotificationsEnabled } = useApp();
-
-  // Mirrors `prices` for reads from inside the poll loop's closures, where
-  // the state variable itself would otherwise be stale (captured once when
-  // the effect was set up, not on every tick).
-  const pricesRef = useRef({});
-  useEffect(() => { pricesRef.current = prices; }, [prices]);
-
-  // Snapshot of the open trades seen on the previous tick, keyed by id —
-  // this is how open/close events are detected: a trade present now but not
-  // before just opened; one present before but missing now just closed.
-  const prevTradesRef = useRef(null); // null until the first poll establishes a baseline
-  const isFirstTickRef = useRef(true);
 
   // Only the distinct (symbol, assetClass) pairs actually need to be part of
   // the effect's dependency identity — re-running the poll loop just because
   // trade objects were recreated (e.g. a formatting re-render upstream)
   // would restart the interval for no reason. Trade rows may carry either
   // spelling (EUR_USD or EURUSD — see lib/symbols.js), so normalize before
-  // matching against the known asset-class sets.
+  // matching against the known asset-class sets. Recomputed every render
+  // from the live `trades` argument, so once a caller polls its trades list
+  // (rather than fetching it once on mount), the symbol set driving this
+  // poll stays current instead of freezing at whatever was open at mount.
   const symbolKey = [...new Set(
     trades.map((t) => normalizeSymbol(t.symbol)).filter((s) => assetClassFor(s) !== null)
   )].sort().join(',');
@@ -78,44 +73,6 @@ export function useLiveTradePnl(trades) {
       ]);
       if (cancelled) return;
       setPrices({ ...cryptoPrices, ...forexIndexPrices });
-
-      // Open/close detection needs its own fresh read of open trades every
-      // tick — the `trades` this hook receives from its caller
-      // (ProTerminal/LogPage) is only fetched once on mount, so it never
-      // reflects a trade opening or closing while the page stays open.
-      // Piggybacked onto this same interval rather than a second poller.
-      if (tradeNotificationsEnabled) {
-        let openNow;
-        try {
-          openNow = await fetchTrades('open');
-        } catch {
-          return; // network hiccup — try again next tick
-        }
-        if (cancelled) return;
-        const current = new Map(openNow.map((t) => [t.id, t]));
-
-        if (isFirstTickRef.current || prevTradesRef.current === null) {
-          isFirstTickRef.current = false;
-          prevTradesRef.current = current;
-          return; // don't announce already-open trades as "just opened"
-        }
-
-        const prev = prevTradesRef.current;
-        for (const [id, t] of current) {
-          if (!prev.has(id)) {
-            pushTradeToast({ kind: 'open', symbol: normalizeSymbol(t.symbol), direction: t.direction });
-          }
-        }
-        for (const [id, t] of prev) {
-          if (!current.has(id)) {
-            const symbol = normalizeSymbol(t.symbol);
-            const price = pricesRef.current[symbol];
-            const pnl = Number.isFinite(price) ? pnlFor(t.direction, t.entry, price, t.volume) : null;
-            pushTradeToast({ kind: 'close', symbol, direction: t.direction, pnl });
-          }
-        }
-        prevTradesRef.current = current;
-      }
     }
 
     poll();
@@ -124,8 +81,7 @@ export function useLiveTradePnl(trades) {
       cancelled = true;
       clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbolKey, tradeNotificationsEnabled]);
+  }, [symbolKey]);
 
   const result = new Map();
   for (const t of trades) {

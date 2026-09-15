@@ -97,14 +97,24 @@ async function getStrategies(env) {
   }
 }
 
+// trades.signal_id -> signals.strategy_id -> strategies.name — the join
+// that was never wired up (see the "strategy: '—'" comments this replaces
+// in ProTerminal.jsx/LogPage.jsx/Dashboard.jsx). LEFT JOINs throughout: a
+// trade with no signal_id (or a signal whose strategy was since removed)
+// still comes back, just with strategy_id/strategy_name null rather than
+// dropping the row.
 async function getTrades(url, env) {
   try {
     const status = url.searchParams.get('status');
+    const base = `SELECT t.*, s.strategy_id as strategy_id, st.name as strategy_name
+       FROM trades t
+       LEFT JOIN signals s ON s.id = t.signal_id
+       LEFT JOIN strategies st ON st.id = s.strategy_id`;
     let stmt;
     if (status === 'open' || status === 'closed') {
-      stmt = env.DB.prepare('SELECT * FROM trades WHERE status = ? ORDER BY opened_at DESC').bind(status);
+      stmt = env.DB.prepare(`${base} WHERE t.status = ? ORDER BY t.opened_at DESC`).bind(status);
     } else {
-      stmt = env.DB.prepare('SELECT * FROM trades ORDER BY opened_at DESC');
+      stmt = env.DB.prepare(`${base} ORDER BY t.opened_at DESC`);
     }
     const { results } = await stmt.all();
     return Response.json({ data: results });
@@ -117,13 +127,21 @@ async function getActivityLog(url, env) {
   try {
     const source = url.searchParams.get('source');
     const LIMIT = 200;
+    // Same strategy join as getTrades, via activity_log.related_trade_id.
+    // System-source rows (no related trade) come back with strategy_name
+    // null, same as an unattributed trade.
+    const base = `SELECT a.*, st.name as strategy_name
+       FROM activity_log a
+       LEFT JOIN trades t ON t.id = a.related_trade_id
+       LEFT JOIN signals s ON s.id = t.signal_id
+       LEFT JOIN strategies st ON st.id = s.strategy_id`;
     let stmt;
     if (source === 'system' || source === 'binance' || source === 'oanda') {
       stmt = env.DB.prepare(
-        'SELECT * FROM activity_log WHERE source = ? ORDER BY timestamp DESC LIMIT ?'
+        `${base} WHERE a.source = ? ORDER BY a.timestamp DESC LIMIT ?`
       ).bind(source, LIMIT);
     } else {
-      stmt = env.DB.prepare('SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT ?').bind(LIMIT);
+      stmt = env.DB.prepare(`${base} ORDER BY a.timestamp DESC LIMIT ?`).bind(LIMIT);
     }
     const { results } = await stmt.all();
     return Response.json({ data: results });

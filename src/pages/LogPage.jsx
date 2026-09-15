@@ -72,7 +72,7 @@ function toRowTrade(t) {
     entryFmt: fmtNum(t.entry, t.entry < 50 ? 5 : 2),
     sl: fmtNum(t.sl, 2),
     tp: fmtNum(t.tp, 2),
-    strategy: '—',
+    strategy: t.strategy_name || '—',
     factor: '—',
     duration: fmtDuration(t.opened_at, t.closed_at),
     source: sourceGroup(t.source),
@@ -84,11 +84,16 @@ function toRowActivity(a) {
   const opened = /eröffnet|eroeffnet/.test(a.message);
   const timePart = (a.timestamp || '').split(' ')[1] || a.timestamp;
   const srcLabel = { binance: 'BINANCE', oanda: 'MT5', system: 'SYSTEM' }[a.source] || a.source?.toUpperCase();
+  // Now joined server-side via related_trade_id -> trades -> signals ->
+  // strategies (see worker/src/routes/api.js's getActivityLog) — appended
+  // to the message rather than replacing it, since the message text itself
+  // isn't otherwise touched.
+  const text = a.strategy_name ? `${a.message} · ${a.strategy_name}` : a.message;
   return {
     time: timePart,
     src: srcLabel,
     mark: closed ? '✕' : opened ? '▸' : '·',
-    text: a.message,
+    text,
     source: a.source === 'system' ? 'system' : sourceGroup(a.source === 'oanda' ? 'oanda_demo' : 'binance_testnet'),
     closed,
   };
@@ -103,9 +108,11 @@ export default function LogPage() {
   const loadTrades = useCallback(() => fetchTrades('open'), []);
   const loadActivity = useCallback(() => fetchActivityLog(), []);
   const loadPnlCalendar = useCallback(() => fetchPnlCalendar(), []);
-  const tradesQ = useFetch(loadTrades, [loadTrades]);
-  const activityQ = useFetch(loadActivity, [loadActivity]);
-  const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar]);
+  // All three polled — trades/activity so new events show up without a
+  // reload, calendar so a trade closing updates the day's total live.
+  const tradesQ = useFetch(loadTrades, [loadTrades], { pollMs: 20_000 });
+  const activityQ = useFetch(loadActivity, [loadActivity], { pollMs: 20_000 });
+  const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar], { pollMs: 30_000 });
 
   const openTrades = useMemo(() => {
     const rows = (tradesQ.data || []).map(toRowTrade);
