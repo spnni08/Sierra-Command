@@ -63,7 +63,7 @@ function toClosedRow(t) {
     time: fmtClosedTime(t.closed_at),
     symbol: normalizeSymbol(t.symbol),
     dir: t.direction === 'long' ? 'LONG' : 'SHORT',
-    strategy: '—',
+    strategy: t.strategy_name || '—',
     duration: fmtHours(t.opened_at, t.closed_at || t.opened_at),
     pnl: (neg ? '−' : '+') + pnlAbs + ' €',
     neg,

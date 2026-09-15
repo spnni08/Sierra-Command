@@ -99,7 +99,7 @@ function toOpenTradeRow(t) {
     entryFmt: fmtEntryNum(t.entry, t.entry < 50 ? 5 : 2),
     sl: fmtEntryNum(t.sl, t.sl < 50 ? 5 : 2),
     tp: fmtEntryNum(t.tp, t.tp < 50 ? 5 : 2),
-    strategy: '—', // trades.signal_id -> signals -> strategies join not wired yet
+    strategy: t.strategy_name || '—', // now joined server-side: trades -> signals -> strategies
     duration: fmtOpenDuration(t.opened_at),
   };
 }
