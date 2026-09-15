@@ -3,6 +3,7 @@ import { SESSIONS, NEWSLV } from '../data/mockData';
 import { fetchStrategies, putStrategySettings, patchStrategyActive } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 function sessionIdxFromFilter(filter) {
   if (!Array.isArray(filter) || filter.length === 0) return 0; // Alle Sessions
@@ -29,15 +30,16 @@ function newsThresholdFromIdx(idx) {
 
 function toCardStrategy(row) {
   const factorCount = Array.isArray(row.factor_definition?.factors) ? row.factor_definition.factors.length : 0;
+  const settings = row.settings || {};
   return {
     id: row.id,
     name: row.name,
     market: Array.isArray(row.asset_classes) ? row.asset_classes.join(', ') : '',
     active: row.active,
-    risk: row.settings.risk_per_trade_pct ?? 1.0,
-    sessionIdx: sessionIdxFromFilter(row.settings.session_filter),
-    corr: row.settings.correlation_limit ?? 0.8,
-    newsIdx: newsIdxFromThreshold(row.settings.news_filter_threshold),
+    risk: settings.risk_per_trade_pct ?? 1.0,
+    sessionIdx: sessionIdxFromFilter(settings.session_filter),
+    corr: settings.correlation_limit ?? 0.8,
+    newsIdx: newsIdxFromThreshold(settings.news_filter_threshold),
     factors: factorCount ? `${factorCount}/7` : '—',
   };
 }
@@ -59,7 +61,7 @@ function StrategyCard({ st, onToggle, onRisk, onSession, onCorr, onNews }) {
 
       <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
-          <div style={{ flex: 1, color: 'var(--txt2)' }}>Risiko pro Trade</div><div>{st.risk.toFixed(1)}%</div>
+          <div style={{ flex: 1, color: 'var(--txt2)' }}>Risiko pro Trade</div><div>{Number(st.risk ?? 1.0).toFixed(1)}%</div>
         </div>
         <input type="range" min="0.1" max="2" step="0.1" value={st.risk} onChange={onRisk} style={{ width: '100%', accentColor: 'var(--acc)', height: 14 }} />
       </div>
@@ -71,7 +73,7 @@ function StrategyCard({ st, onToggle, onRisk, onSession, onCorr, onNews }) {
 
       <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
-          <div style={{ flex: 1, color: 'var(--txt2)' }}>Korrelationsgrenze (ρ)</div><div>{st.corr.toFixed(2)}</div>
+          <div style={{ flex: 1, color: 'var(--txt2)' }}>Korrelationsgrenze (ρ)</div><div>{Number(st.corr ?? 0.8).toFixed(2)}</div>
         </div>
         <input type="range" min="0.5" max="1" step="0.05" value={st.corr} onChange={onCorr} style={{ width: '100%', accentColor: 'var(--acc)', height: 14 }} />
       </div>
@@ -92,7 +94,7 @@ export default function AutoTrade() {
   const { data, loading, error, reload } = useFetch(loadStrategies, [loadStrategies]);
 
   useEffect(() => {
-    if (data) setStrategies(data.map(toCardStrategy));
+    if (Array.isArray(data)) setStrategies(data.map(toCardStrategy));
   }, [data]);
 
   const activeCount = strategies.filter(s => s.active).length;
@@ -148,21 +150,23 @@ export default function AutoTrade() {
       <div style={{ overflow: 'auto', minHeight: 0 }}>
         <StatusPanel loading={loading} error={error} onRetry={reload} />
 
-        {!loading && !error && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--line)' }}>
-            {strategies.map((st, i) => (
-              <StrategyCard
-                key={st.id}
-                st={st}
-                onToggle={() => update(i, { active: !st.active })}
-                onRisk={e => update(i, { risk: parseFloat(e.target.value) })}
-                onCorr={e => update(i, { corr: parseFloat(e.target.value) })}
-                onSession={() => update(i, { sessionIdx: (st.sessionIdx + 1) % SESSIONS.length })}
-                onNews={() => update(i, { newsIdx: (st.newsIdx + 1) % NEWSLV.length })}
-              />
-            ))}
-          </div>
-        )}
+        <ErrorBoundary message="Strategie-Einstellungen konnten nicht dargestellt werden — unerwartete oder unvollständige Daten.">
+          {!loading && !error && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--line)' }}>
+              {strategies.map((st, i) => (
+                <StrategyCard
+                  key={st.id}
+                  st={st}
+                  onToggle={() => update(i, { active: !st.active })}
+                  onRisk={e => update(i, { risk: parseFloat(e.target.value) })}
+                  onCorr={e => update(i, { corr: parseFloat(e.target.value) })}
+                  onSession={() => update(i, { sessionIdx: (st.sessionIdx + 1) % SESSIONS.length })}
+                  onNews={() => update(i, { newsIdx: (st.newsIdx + 1) % NEWSLV.length })}
+                />
+              ))}
+            </div>
+          )}
+        </ErrorBoundary>
       </div>
     </div>
   );
