@@ -1,6 +1,84 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { TICKER } from '../data/mockData';
+import { fetchCryptoPrices, fetchForexIndexPrices } from '../api/client';
+
+const TICKER_POLL_MS = 20_000;
+
+// Label + our-own-symbol pairs for the header's "MÄRKTE" ticker — same
+// symbol coverage as useLiveTradePnl's CRYPTO_SYMBOLS/FOREX_INDEX_SYMBOLS
+// (the small stable subset each covers), split by which worker price proxy
+// serves them.
+const TICKER_CRYPTO = [
+  { sym: 'BTC/USD', symbol: 'BTC', dec: 2 },
+  { sym: 'ETH/USD', symbol: 'ETH', dec: 2 },
+  { sym: 'SOL/USD', symbol: 'SOL', dec: 2 },
+];
+const TICKER_FOREX_INDEX = [
+  { sym: 'EUR/USD', symbol: 'EURUSD', dec: 5 },
+  { sym: 'S&P 500', symbol: 'SPX500', dec: 2 },
+  { sym: 'NAS 100', symbol: 'NAS100', dec: 2 },
+];
+const TICKER_ROWS = [...TICKER_CRYPTO, ...TICKER_FOREX_INDEX];
+
+function fmtTickerPrice(v, dec) {
+  if (!Number.isFinite(v)) return '—';
+  return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function fmtTickerChg(pct) {
+  if (!Number.isFinite(pct)) return '—';
+  const s = Math.abs(pct * 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (pct >= 0 ? '+' : '−') + s + '%';
+}
+
+// Was a static mock array (src/data/mockData.js's TICKER) never wired to
+// any API — a different root cause than the rest of the app's fetch-once
+// bug, since this data was never fetched at all. Polls the same worker
+// price proxies useLiveTradePnl uses, every 20s. `chg` is the % move since
+// the previous poll tick (the worker proxies only return a current price,
+// no daily-change field), so it reads "—" until the second tick.
+function useTickerPrices() {
+  const [prices, setPrices] = useState({}); // symbol -> price|null
+  const [changes, setChanges] = useState({}); // symbol -> pct change since last tick|null
+  const prevRef = useRef({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function poll() {
+      const [cryptoPrices, forexIndexPrices] = await Promise.all([
+        fetchCryptoPrices(TICKER_CRYPTO.map((r) => r.symbol)),
+        fetchForexIndexPrices(TICKER_FOREX_INDEX.map((r) => r.symbol)),
+      ]);
+      if (cancelled) return;
+      const next = { ...cryptoPrices, ...forexIndexPrices };
+      const prev = prevRef.current;
+      const nextChanges = {};
+      for (const { symbol } of TICKER_ROWS) {
+        const p = next[symbol], prevP = prev[symbol];
+        nextChanges[symbol] = Number.isFinite(p) && Number.isFinite(prevP) && prevP !== 0
+          ? (p - prevP) / prevP
+          : null;
+      }
+      prevRef.current = next;
+      setPrices(next);
+      setChanges(nextChanges);
+    }
+
+    poll();
+    const id = setInterval(poll, TICKER_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  return TICKER_ROWS.map((r) => ({
+    sym: r.sym,
+    price: fmtTickerPrice(prices[r.symbol], r.dec),
+    chg: fmtTickerChg(changes[r.symbol]),
+  }));
+}
 
 const DASHBOARD_TAB = { key: 'dash', label: 'Dashboard' };
 
@@ -133,6 +211,7 @@ function GroupDropdown({ group, page, setPage, lastVisitedByGroup, setLastVisite
 export default function Header({ page, setPage }) {
   const { theme, toggleTheme, dense, setPro, setSimple, lastVisitedByGroup, setLastVisited } = useApp();
   const themeLabel = theme === 'dark' ? 'DUNKEL' : 'HELL';
+  const ticker = useTickerPrices();
 
   return (
     <>
@@ -189,7 +268,7 @@ export default function Header({ page, setPage }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--panel2)', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, height: 30, overflowX: 'auto', overflowY: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
           <div style={{ padding: '0 10px', color: 'var(--txt3)', letterSpacing: '0.08em', borderRight: '1px solid var(--line)', lineHeight: '29px' }}>MÄRKTE</div>
-          {TICKER.map(t => (
+          {ticker.map(t => (
             <div key={t.sym} style={{ padding: '0 11px', borderRight: '1px solid var(--line)', lineHeight: '29px' }}>
               <span style={{ color: 'var(--txt2)' }}>{t.sym}</span>{' '}
               <span style={{ color: 'var(--txt)' }}>{t.price}</span>{' '}
