@@ -221,7 +221,9 @@ export default function ProTerminal() {
   const activeTile = MULTI_CHART_TILES.find(t => t.sym === activeSym) || MULTI_CHART_TILES[0];
 
   const loadOpenTrades = useCallback(() => fetchTrades('open'), []);
-  const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades]);
+  // Polled (not fetch-once) so a trade opened/closed elsewhere shows up here
+  // without a manual reload — same 20s cadence as the live-price poll.
+  const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades], { pollMs: 20_000 });
   const trades = useMemo(() => (openTradesQ.data || []).map(toOpenTradeRow), [openTradesQ.data]);
   const livePnl = useLiveTradePnl(trades);
   const primaryTrade = trades[0] ?? { id: null, entry: NaN, entryFmt: '—', tp: '—', sl: '—', strategy: '—', duration: '—' };

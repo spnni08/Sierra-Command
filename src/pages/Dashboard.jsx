@@ -137,7 +137,9 @@ export default function Dashboard({ goAutoSettings, goLog }) {
   const isBacktest = dashMode === 'backtest';
 
   const loadClosedTrades = useCallback(() => fetchTrades('closed'), []);
-  const closedQ = useFetch(loadClosedTrades, [loadClosedTrades]);
+  // Polled — headline numbers (balance/win-rate/etc.) were previously frozen
+  // at whatever they were on mount, in both live and backtest mode.
+  const closedQ = useFetch(loadClosedTrades, [loadClosedTrades], { pollMs: 20_000 });
   const recentClosedTrades = useMemo(
     () => (closedQ.data || []).slice(0, 5).map(toClosedRow),
     [closedQ.data]
@@ -147,7 +149,7 @@ export default function Dashboard({ goAutoSettings, goLog }) {
     () => Promise.all([fetchStrategies(), fetchBacktestRuns()]),
     []
   );
-  const strategyStatsQ = useFetch(loadStrategyStats, [loadStrategyStats]);
+  const strategyStatsQ = useFetch(loadStrategyStats, [loadStrategyStats], { pollMs: 30_000 });
   const strategyStats = useMemo(() => {
     if (!strategyStatsQ.data) return [];
     const [strategies, backtestRuns] = strategyStatsQ.data;
@@ -162,7 +164,7 @@ export default function Dashboard({ goAutoSettings, goLog }) {
   const latestBacktestRun = strategyStatsQ.data?.[1]?.[0] ?? null;
 
   const loadPnlCalendar = useCallback(() => fetchPnlCalendar(), []);
-  const pnlCalendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar]);
+  const pnlCalendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar], { pollMs: 30_000 });
 
   const trailing30 = useMemo(() => computeTrailingStats(closedQ.data || [], 30), [closedQ.data]);
   const todayStats = useMemo(() => {

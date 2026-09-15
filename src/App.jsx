@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import TradeNotificationsProvider from './context/TradeNotificationsProvider';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import UpdateAvailableModal from './components/UpdateAvailableModal';
@@ -40,6 +41,7 @@ function Shell() {
       <Footer />
       <UpdateAvailableModal />
       <TradeToasts />
+      <TradeNotificationsProvider />
     </div>
   );
 }

@@ -103,9 +103,11 @@ export default function LogPage() {
   const loadTrades = useCallback(() => fetchTrades('open'), []);
   const loadActivity = useCallback(() => fetchActivityLog(), []);
   const loadPnlCalendar = useCallback(() => fetchPnlCalendar(), []);
-  const tradesQ = useFetch(loadTrades, [loadTrades]);
-  const activityQ = useFetch(loadActivity, [loadActivity]);
-  const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar]);
+  // All three polled — trades/activity so new events show up without a
+  // reload, calendar so a trade closing updates the day's total live.
+  const tradesQ = useFetch(loadTrades, [loadTrades], { pollMs: 20_000 });
+  const activityQ = useFetch(loadActivity, [loadActivity], { pollMs: 20_000 });
+  const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar], { pollMs: 30_000 });
 
   const openTrades = useMemo(() => {
     const rows = (tradesQ.data || []).map(toRowTrade);
