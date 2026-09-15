@@ -227,7 +227,10 @@ export default function ProTerminal() {
   // Polled (not fetch-once) so a trade opened/closed elsewhere shows up here
   // without a manual reload — same 20s cadence as the live-price poll.
   const openTradesQ = useFetch(loadOpenTrades, [loadOpenTrades], { pollMs: 20_000 });
-  const trades = useMemo(() => (openTradesQ.data || []).map(toOpenTradeRow), [openTradesQ.data]);
+  const trades = useMemo(
+    () => (Array.isArray(openTradesQ.data) ? openTradesQ.data : []).map(toOpenTradeRow),
+    [openTradesQ.data]
+  );
   const livePnl = useLiveTradePnl(trades);
   const primaryTrade = trades[0] ?? { id: null, entry: NaN, entryFmt: '—', tp: '—', sl: '—', strategy: '—', duration: '—' };
   const entryNum = primaryTrade.entry;
@@ -244,7 +247,7 @@ export default function ProTerminal() {
 
   const loadStrategies = useCallback(() => fetchStrategies(), []);
   const strategiesQ = useFetch(loadStrategies, [loadStrategies]);
-  const allStrategies = strategiesQ.data || [];
+  const allStrategies = Array.isArray(strategiesQ.data) ? strategiesQ.data : [];
   const backtestableStrategies = allStrategies.filter(s => BACKTESTABLE_STRATEGY_IDS.has(s.id));
   const nonBacktestableStrategies = allStrategies.filter(s => !BACKTESTABLE_STRATEGY_IDS.has(s.id));
 

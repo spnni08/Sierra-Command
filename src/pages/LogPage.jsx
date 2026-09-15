@@ -118,7 +118,7 @@ export default function LogPage() {
   const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar], { pollMs: 30_000 });
 
   const openTrades = useMemo(() => {
-    const rows = (tradesQ.data || []).map(toRowTrade);
+    const rows = (Array.isArray(tradesQ.data) ? tradesQ.data : []).map(toRowTrade);
     return rows.filter(t => {
       if (logStatus === 'closed') return false;
       if (logSrc === 'mt5' && t.source !== 'mt5') return false;
@@ -128,7 +128,7 @@ export default function LogPage() {
   }, [tradesQ.data, logStatus, logSrc]);
 
   const activityLog = useMemo(() => {
-    const rows = (activityQ.data || []).map(toRowActivity);
+    const rows = (Array.isArray(activityQ.data) ? activityQ.data : []).map(toRowActivity);
     return rows.filter(a => {
       if (logStatus === 'open' && a.closed) return false;
       if (logStatus === 'closed' && !a.closed) return false;
