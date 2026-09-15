@@ -7,6 +7,15 @@ binding = "DB"
 database_name = "sierra-command-db"
 database_id = "11c3404b-faac-429f-bc48-9bd40ba93531"
 
+[triggers]
+# Auto-close open crypto (Binance) trades whose SL/TP has been hit — see
+# src/cron/checkOpenTrades.js. Every 2 minutes: tighter than the ~3min
+# candle-check cadence WAVESCOUT itself runs on, so a hit is caught within
+# roughly one candle-check cycle rather than trailing it by a full interval,
+# without polling so often it meaningfully outpaces how often the underlying
+# price data actually changes.
+crons = ["*/2 * * * *"]
+
 [vars]
 ALLOWED_ORIGIN = "https://sierra-command.web.app"
 # Base URL of the WAVESCOUT (tradingview-bot) worker that GET /wavescout/price
