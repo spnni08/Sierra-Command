@@ -5,6 +5,7 @@ import { useFetch } from '../api/useFetch';
 import { useLiveTradePnl } from '../api/useLiveTradePnl';
 import { pnlDisplay } from '../lib/pnlFormat';
 import StatusPanel from '../api/StatusPanel';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 // Builds the calendar grid (leading blanks + one cell per day of the month)
 // from the real per-day PnL totals returned by /api/pnl-calendar.
@@ -47,7 +48,9 @@ function fmtNum(v, dec = 2) {
 }
 
 function fmtDuration(openedAt, closedAt) {
+  if (!openedAt) return '—';
   const start = new Date(openedAt.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(start.getTime())) return '—';
   const end = closedAt ? new Date(closedAt.replace(' ', 'T') + 'Z') : new Date();
   const hrs = Math.max(0, (end - start) / 3_600_000);
   return hrs.toFixed(2).replace('.', ',') + ' h';
@@ -63,13 +66,13 @@ function sourceGroup(source) {
 function toRowTrade(t) {
   return {
     id: t.id,
-    symbol: t.symbol,
+    symbol: t.symbol ?? '—',
     direction: t.direction,
     entry: t.entry,
     volume: t.volume,
     dir: t.direction === 'long' ? 'LONG' : 'SHORT',
     vol: fmtNum(t.volume, 2),
-    entryFmt: fmtNum(t.entry, t.entry < 50 ? 5 : 2),
+    entryFmt: fmtNum(t.entry, Number(t.entry) < 50 ? 5 : 2),
     sl: fmtNum(t.sl, 2),
     tp: fmtNum(t.tp, 2),
     strategy: t.strategy_name || '—',
@@ -115,7 +118,7 @@ export default function LogPage() {
   const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar], { pollMs: 30_000 });
 
   const openTrades = useMemo(() => {
-    const rows = (tradesQ.data || []).map(toRowTrade);
+    const rows = (Array.isArray(tradesQ.data) ? tradesQ.data : []).map(toRowTrade);
     return rows.filter(t => {
       if (logStatus === 'closed') return false;
       if (logSrc === 'mt5' && t.source !== 'mt5') return false;
@@ -125,7 +128,7 @@ export default function LogPage() {
   }, [tradesQ.data, logStatus, logSrc]);
 
   const activityLog = useMemo(() => {
-    const rows = (activityQ.data || []).map(toRowActivity);
+    const rows = (Array.isArray(activityQ.data) ? activityQ.data : []).map(toRowActivity);
     return rows.filter(a => {
       if (logStatus === 'open' && a.closed) return false;
       if (logStatus === 'closed' && !a.closed) return false;
@@ -169,6 +172,7 @@ export default function LogPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: dense ? '1fr 320px' : '1fr 280px', gap: 1, background: 'var(--line)', flex: 1, minHeight: 0 }}>
         <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', gap: 1, background: 'var(--line)', minHeight: 0 }}>
+          <ErrorBoundary>
           <div style={{ background: 'var(--panel)' }}>
             <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Offene Trades · vollständig</div>
             <StatusPanel loading={tradesQ.loading} error={tradesQ.error} onRetry={tradesQ.reload} />
@@ -194,7 +198,9 @@ export default function LogPage() {
               </div>
             )}
           </div>
+          </ErrorBoundary>
 
+          <ErrorBoundary>
           <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Vollständige Aktivitäts-Historie</div>
             <StatusPanel loading={activityQ.loading} error={activityQ.error} onRetry={activityQ.reload} />
@@ -210,8 +216,10 @@ export default function LogPage() {
               </div>
             )}
           </div>
+          </ErrorBoundary>
         </div>
 
+        <ErrorBoundary>
         <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
           <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>PNL-Kalender · {calendarTitle}</div>
           <StatusPanel loading={calendarQ.loading} error={calendarQ.error} onRetry={calendarQ.reload} />
@@ -260,6 +268,7 @@ export default function LogPage() {
             </div>
           </div>
         </div>
+        </ErrorBoundary>
       </div>
     </div>
   );
