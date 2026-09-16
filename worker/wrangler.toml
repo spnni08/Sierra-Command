@@ -30,3 +30,7 @@ WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
 #                          and the OANDA simulation engine's live prices)
 #   COINGECKO_API_KEY - optional; CoinGecko's free tier works anonymously
 #                        without one, this only raises the rate limit
+#   PUBLIC_TRADES_TOKEN - optional shared-secret query token for
+#                          GET /api/public/trades (Ground Delta's trade
+#                          panel). If unset, that endpoint stays open —
+#                          set this before sharing the URL anywhere public.

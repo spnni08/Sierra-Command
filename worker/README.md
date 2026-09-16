@@ -71,6 +71,33 @@ trailing-exit trade, no fan-out — for backwards compatibility with any
 alert still configured that way, but it's no longer the recommended setup;
 point new alerts at the fixed endpoint instead.
 
+## Public read-only export: `GET /api/public/trades`
+
+Deliberately separate from the internal `/api/trades` used by Sierra
+Command's own frontend — built for external, read-only dashboards (first
+consumer: Ground Delta's trade panel, a completely separate project/
+Cloudflare account/D1 instance). Returns open trades plus trades closed in
+the last 24h, `{ symbol, direction, entry, sl, tp, status, pnl,
+strategy_name, opened_at, closed_at }` only — no trade id, no signal_id,
+no `source` (which would leak testnet vs. live), no volume, no
+credentials.
+
+CORS-allowed for `https://ground-delta-journal.web.app` (and its
+`.firebaseapp.com` twin) in `src/cors.js`.
+
+Optional query-token gate via the `PUBLIC_TRADES_TOKEN` secret — if unset,
+the endpoint is open to anyone who has the URL (fine for local dev, not
+for sharing the URL publicly). Set it with:
+
+```
+npx wrangler secret put PUBLIC_TRADES_TOKEN
+```
+
+then callers pass `?token=<the same value>`, e.g.
+`GET /api/public/trades?token=...`. This is a plain shared secret, not a
+per-client credential — rotate it (set a new value, update every
+consumer) if it ever leaks, rather than trying to revoke one caller.
+
 ## Deploy
 
 Deploys automatically via `.github/workflows/worker-deploy.yml` on every

@@ -6,6 +6,10 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'https://sierra-command.firebaseapp.com',
   'https://sierra-command-1.web.app',
   'https://sierra-command-1.firebaseapp.com',
+  // Ground Delta's trade panel (GET /api/public/trades only) — a separate
+  // project/Cloudflare account/D1 instance, read-only consumer.
+  'https://ground-delta-journal.web.app',
+  'https://ground-delta-journal.firebaseapp.com',
 ];
 
 export function corsHeaders(request, env) {

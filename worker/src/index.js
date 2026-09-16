@@ -3,6 +3,7 @@ import { handleOandaRoute } from './routes/oanda.js';
 import { handleCoinGeckoRoute } from './routes/coingecko.js';
 import { handleTwelveDataRoute } from './routes/twelvedata.js';
 import { handleApiRoute } from './routes/api.js';
+import { handlePublicRoute } from './routes/public.js';
 import { handleSimulationRoute } from './routes/simulation.js';
 import { handleWebhookRoute } from './routes/webhook.js';
 import { handleBacktestRoute } from './routes/backtest.js';
@@ -30,6 +31,8 @@ export default {
         response = await handleCoinGeckoRoute(request, url, env);
       } else if (url.pathname.startsWith('/twelvedata')) {
         response = await handleTwelveDataRoute(request, url, env);
+      } else if (url.pathname.startsWith('/api/public')) {
+        response = await handlePublicRoute(url, env);
       } else if (url.pathname.startsWith('/api')) {
         response = await handleApiRoute(request, url, env);
       } else if (url.pathname.startsWith('/simulation')) {
