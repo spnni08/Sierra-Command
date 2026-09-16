@@ -98,11 +98,12 @@ function computeTrailingStats(closedTrades, days) {
 // Real cumulative realized PnL over closed trades in the trailing N days —
 // deliberately NOT labeled "account equity"/"Kontostand": there is no
 // starting balance anywhere in the schema, so this is a trade-PnL curve,
-// not a balance history. Chronological, oldest first.
-function EquityCurveFromTrades({ trades, days }) {
-  const cutoff = Date.now() - days * 86_400_000;
+// not a balance history. Chronological, oldest first. Takes already-
+// windowed trades (see liveEquityTrades below) rather than filtering by
+// `days` itself, so the caller's window and the displayed label can never
+// drift apart the way the old hardcoded "90 Tage" title did.
+function EquityCurveFromTrades({ trades }) {
   const inWindow = trades
-    .filter((t) => t.closed_at && parseDbTimestamp(t.closed_at).getTime() >= cutoff)
     .slice()
     .sort((a, b) => parseDbTimestamp(a.closed_at) - parseDbTimestamp(b.closed_at));
   if (inWindow.length === 0) return null;
@@ -144,6 +145,27 @@ export default function Dashboard({ goAutoSettings, goLog }) {
     () => (closedQ.data || []).slice(0, 5).map(toClosedRow),
     [closedQ.data]
   );
+
+  // Live/Demo equity curve: 90 days is an UPPER BOUND on the lookback
+  // window, not a claim about how much history actually exists — real
+  // trading only started 2026-09-14 (see activity_log), so the label below
+  // reflects the actual span of the trades being plotted (however many
+  // days that turns out to be) instead of a hardcoded "90 Tage" that would
+  // overstate it. Backtest mode never touches this — it has its own
+  // "Keine Kurve verfügbar" branch below, since backtest_runs stores only
+  // summary metrics, no trade-by-trade history to plot.
+  const EQUITY_WINDOW_DAYS = 90;
+  const liveEquityTrades = useMemo(() => {
+    const cutoff = Date.now() - EQUITY_WINDOW_DAYS * 86_400_000;
+    return (closedQ.data || []).filter(
+      (t) => t.closed_at && parseDbTimestamp(t.closed_at).getTime() >= cutoff
+    );
+  }, [closedQ.data]);
+  const liveEquitySpanDays = useMemo(() => {
+    if (liveEquityTrades.length === 0) return null;
+    const earliest = Math.min(...liveEquityTrades.map((t) => parseDbTimestamp(t.closed_at).getTime()));
+    return Math.max(1, Math.ceil((Date.now() - earliest) / 86_400_000));
+  }, [liveEquityTrades]);
 
   const loadStrategyStats = useCallback(
     () => Promise.all([fetchStrategies(), fetchBacktestRuns()]),
@@ -222,7 +244,9 @@ export default function Dashboard({ goAutoSettings, goLog }) {
         { label: 'Offenes Risiko', val: '—', sub: 'Keine Margin-/Limit-Datenquelle vorhanden', accent: true },
       ];
 
-  const equityTitle = isBacktest ? 'Equity-Kurve · Backtest' : 'Kumulierte PnL · 90 Tage (realisierte Trades)';
+  const equityTitle = isBacktest
+    ? 'Equity-Kurve · Backtest'
+    : `Kumulierte PnL · ${liveEquitySpanDays ?? '—'} Tage (realisierte Trades)`;
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -265,19 +289,12 @@ export default function Dashboard({ goAutoSettings, goLog }) {
               <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>
                 Keine Kurve verfügbar — backtest_runs speichert nur Kennzahlen, keine Trade-für-Trade-Historie
               </div>
-            ) : !closedQ.data ? null : (
-              (() => {
-                const withPnlIn90d = (closedQ.data || []).filter(
-                  (t) => t.closed_at && parseDbTimestamp(t.closed_at).getTime() >= Date.now() - 90 * 86_400_000
-                );
-                return withPnlIn90d.length > 0 ? (
-                  <EquityCurveFromTrades trades={closedQ.data} days={90} />
-                ) : (
-                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>
-                    Keine geschlossenen Trades in den letzten 90 Tagen
-                  </div>
-                );
-              })()
+            ) : !closedQ.data ? null : liveEquityTrades.length > 0 ? (
+              <EquityCurveFromTrades trades={liveEquityTrades} />
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>
+                Keine geschlossenen Trades in den letzten 90 Tagen
+              </div>
             )}
           </div>
         </div>

@@ -40,17 +40,24 @@ function fmtTickerChg(pct) {
 function useTickerPrices() {
   const [prices, setPrices] = useState({}); // symbol -> price|null
   const [changes, setChanges] = useState({}); // symbol -> pct change since last tick|null
+  // Real round-trip time of this same poll's Promise.all, in ms — this is
+  // what the header's "LATENZ" figure shows. fetchLivePrices() never
+  // throws (see api/client.js), so this measures actual request duration
+  // even when a price comes back null, not just the happy path.
+  const [latencyMs, setLatencyMs] = useState(null);
   const prevRef = useRef({});
 
   useEffect(() => {
     let cancelled = false;
 
     async function poll() {
+      const t0 = performance.now();
       const [cryptoPrices, forexIndexPrices] = await Promise.all([
         fetchCryptoPrices(TICKER_CRYPTO.map((r) => r.symbol)),
         fetchForexIndexPrices(TICKER_FOREX_INDEX.map((r) => r.symbol)),
       ]);
       if (cancelled) return;
+      setLatencyMs(Math.round(performance.now() - t0));
       const next = { ...cryptoPrices, ...forexIndexPrices };
       const prev = prevRef.current;
       const nextChanges = {};
@@ -73,11 +80,14 @@ function useTickerPrices() {
     };
   }, []);
 
-  return TICKER_ROWS.map((r) => ({
-    sym: r.sym,
-    price: fmtTickerPrice(prices[r.symbol], r.dec),
-    chg: fmtTickerChg(changes[r.symbol]),
-  }));
+  return {
+    rows: TICKER_ROWS.map((r) => ({
+      sym: r.sym,
+      price: fmtTickerPrice(prices[r.symbol], r.dec),
+      chg: fmtTickerChg(changes[r.symbol]),
+    })),
+    latencyLabel: latencyMs == null ? '—' : `${latencyMs} ms`,
+  };
 }
 
 const DASHBOARD_TAB = { key: 'dash', label: 'Dashboard' };
@@ -211,7 +221,7 @@ function GroupDropdown({ group, page, setPage, lastVisitedByGroup, setLastVisite
 export default function Header({ page, setPage }) {
   const { theme, toggleTheme, dense, setPro, setSimple, lastVisitedByGroup, setLastVisited } = useApp();
   const themeLabel = theme === 'dark' ? 'DUNKEL' : 'HELL';
-  const ticker = useTickerPrices();
+  const { rows: ticker, latencyLabel } = useTickerPrices();
 
   return (
     <>
@@ -279,8 +289,11 @@ export default function Header({ page, setPage }) {
         <div style={{ flex: 1 }} />
         <div style={{ display: 'flex', alignItems: 'center', height: '100%', borderLeft: '1px solid var(--line)' }}>
           <div style={{ padding: '0 11px', lineHeight: '29px', color: 'var(--txt2)' }}>ENGINE <span style={{ color: 'var(--txt)' }}>LÄUFT</span></div>
-          <div style={{ padding: '0 11px', lineHeight: '29px', borderLeft: '1px solid var(--line)', color: 'var(--txt2)' }}>TICKS/S <span style={{ color: 'var(--txt)' }}>1.284</span></div>
-          <div style={{ padding: '0 11px', lineHeight: '29px', borderLeft: '1px solid var(--line)', color: 'var(--txt2)' }}>LATENZ <span style={{ color: 'var(--txt)' }}>12 ms</span></div>
+          {/* Real round-trip time of the ticker's own price poll (see
+              useTickerPrices) — was a static "12 ms" mockup value before;
+              TICKS/S was removed outright rather than faked, since this app
+              polls REST endpoints and has no actual tick feed to count. */}
+          <div style={{ padding: '0 11px', lineHeight: '29px', borderLeft: '1px solid var(--line)', color: 'var(--txt2)' }}>LATENZ <span style={{ color: 'var(--txt)' }}>{latencyLabel}</span></div>
         </div>
       </div>
     </>
