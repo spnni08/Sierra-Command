@@ -3,7 +3,7 @@ import { subscribeTradeToasts, dismissTradeToast } from '../lib/tradeToastStore'
 import { pnlDisplay } from '../lib/pnlFormat';
 
 const VISIBLE_MS = 10_000;
-const FADE_MS = 400;
+const FADE_MS = 1200;
 
 // Corner-positioned, dismissible-but-not-blocking trade notifications —
 // deliberately distinct from UpdateAvailableModal (full-screen, modal,
