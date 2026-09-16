@@ -6,6 +6,13 @@
 // allowlist setting on the API key). See worker/README.md. Not working
 // around it — that would mean evading Binance's bot/abuse protection.
 // Re-check against the live Binance API when that integration is built.
+//
+// Re-tested 2026-09-16 after futures trading was enabled account-side on the
+// testnet account (no external KYC involved): both /candles (unsigned) and
+// /account-status (signed) still 403 from CloudFront on every one of 4
+// consecutive requests each. The account-side futures permission has no
+// bearing on this — the block happens at CloudFront before the request ever
+// reaches Binance's API layer, so it's independent of API-key permissions.
 const BINANCE_FUTURES_TESTNET_API = 'https://testnet.binancefuture.com';
 
 export async function handleBinanceRoute(request, url, env) {
