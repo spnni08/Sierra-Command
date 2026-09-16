@@ -22,6 +22,24 @@ ALLOWED_ORIGIN = "https://sierra-command.web.app"
 # proxies GET /api/candle-check/latest from.
 WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
 
+# Local dev (`wrangler dev`, no --env flag) picks up this block instead of
+# the [vars] above, so `wrangler dev` allows the Vite dev server's origin
+# without that ever being reachable from the deployed prod worker — prod
+# only ever sees ALLOWED_ORIGIN from [vars]/[env.production] plus
+# cors.js's small fixed list of deployed frontend domains, never localhost.
+[env.dev.vars]
+ALLOWED_ORIGIN = "http://localhost:5173"
+WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
+
+# `wrangler deploy` with no --env (this worker's only deploy path today)
+# reads [vars] above, not this block — kept as the explicit prod values for
+# clarity/documentation, and so `wrangler deploy --env production` (if ever
+# used) resolves to the same thing rather than falling back to [vars]'s dev-
+# shaped intent.
+[env.production.vars]
+ALLOWED_ORIGIN = "https://sierra-command.web.app"
+WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
+
 # Secrets (set via `wrangler secret put <NAME>`, never committed here):
 #   CREDENTIALS_ENCRYPTION_KEY  - base64 AES-256 key for encrypting api_credentials rows
 #   BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET - Binance Futures Testnet credentials
@@ -34,3 +52,17 @@ WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
 #                          GET /api/public/trades (Ground Delta's trade
 #                          panel). If unset, that endpoint stays open —
 #                          set this before sharing the URL anywhere public.
+#   API_ACCESS_TOKEN - bearer token the frontend must send as
+#                       `Authorization: Bearer <token>` on every protected
+#                       route (see src/auth.js). Generate with e.g.
+#                       `openssl rand -hex 32`; never hardcode a real value
+#                       here or anywhere else in the repo.
+#   SETTINGS_PIN - the Settings-page unlock PIN, verified server-side by
+#                   POST /api/settings/unlock (see routes/api.js). Pick your
+#                   own PIN; never hardcode a real value here or anywhere
+#                   else in the repo.
+#   WEBHOOK_SECRET - optional; if set, /webhook/<strategy> requires a
+#                     matching `?secret=` query param (see index.js) since
+#                     TradingView alert requests can't carry a custom
+#                     Authorization header. Unset today because no real
+#                     TradingView alerts point at /webhook yet.

@@ -1,11 +1,28 @@
 // Structural-data routes backed by D1: strategies, trades, activity log,
 // backtest runs, and per-strategy settings. All GET routes return
-// `{ data: [...] }`; the PUT route returns `{ data: {...} }`. No auth —
-// consistent with the existing read-mostly /binance, /oanda, /coingecko, /twelvedata
-// routes at this stage of the project.
+// `{ data: [...] }`; the PUT route returns `{ data: {...} }`. Every route in
+// this file (including /settings/unlock below) sits behind the worker-wide
+// API_ACCESS_TOKEN bearer check in index.js — the frontend already needs
+// that token just to load the app (see src/components/TokenGate.jsx), so by
+// the time Settings mounts and calls /settings/unlock it's already present;
+// there's no chicken-and-egg problem to route around by leaving this one
+// route open.
+
+import { signSettingsSession } from '../auth.js';
 
 export async function handleApiRoute(request, url, env) {
   const path = url.pathname.replace(/^\/api/, '');
+
+  // PIN unlock for the Settings page. The PIN itself (SETTINGS_PIN) never
+  // leaves the worker — a correct guess gets back a short-lived HMAC-signed
+  // session token (see auth.js's signSettingsSession) that the frontend
+  // stores client-side and treats as a soft gate for the Settings UI. There
+  // are no settings-mutating endpoints yet (credential add/rotate is still
+  // unimplemented — see getCredentials below), so there's nothing server-side
+  // left to check this token against beyond the unlock call itself.
+  if (path === '/settings/unlock' && request.method === 'POST') {
+    return handleSettingsUnlock(request, env);
+  }
 
   if (path === '/strategies' && request.method === 'GET') {
     return getStrategies(env);
@@ -51,6 +68,27 @@ export async function handleApiRoute(request, url, env) {
   }
 
   return Response.json({ error: 'not_found', path }, { status: 404 });
+}
+
+async function handleSettingsUnlock(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 });
+  }
+
+  if (!env.SETTINGS_PIN) {
+    // Misconfigured deploy (secret never set) — fail closed.
+    return Response.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
+  if (typeof body?.pin !== 'string' || body.pin !== env.SETTINGS_PIN) {
+    return Response.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
+  const token = await signSettingsSession(env);
+  return Response.json({ data: { token } });
 }
 
 function parseJsonColumn(value, fallback) {

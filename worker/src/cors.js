@@ -1,7 +1,10 @@
-// Allowed frontend origins. ALLOWED_ORIGIN is set per-environment in wrangler.toml
-// (or as a secret for prod); this list covers local dev + the Firebase-hosted domain.
-const DEFAULT_ALLOWED_ORIGINS = [
-  'http://localhost:5173',
+// Allowed frontend origins. These are the deployed prod frontend domains
+// only — never localhost — so a deployed worker (which always has one of
+// [vars]/[env.production].ALLOWED_ORIGIN set, see wrangler.toml) never
+// accepts a localhost Origin no matter what. Local dev's origin comes solely
+// from ALLOWED_ORIGIN via [env.dev.vars] below, so localhost is reachable
+// only through `wrangler dev`, never through a deployed worker.
+const PROD_ALLOWED_ORIGINS = [
   'https://sierra-command.web.app',
   'https://sierra-command.firebaseapp.com',
   'https://sierra-command-1.web.app',
@@ -15,8 +18,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
 export function corsHeaders(request, env) {
   const origin = request.headers.get('Origin') || '';
   const allowed = env.ALLOWED_ORIGIN
-    ? [env.ALLOWED_ORIGIN, ...DEFAULT_ALLOWED_ORIGINS]
-    : DEFAULT_ALLOWED_ORIGINS;
+    ? [env.ALLOWED_ORIGIN, ...PROD_ALLOWED_ORIGINS]
+    : PROD_ALLOWED_ORIGINS;
 
   const isAllowed = allowed.includes(origin);
 

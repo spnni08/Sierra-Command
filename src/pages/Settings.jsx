@@ -1,11 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { fetchCredentials } from '../api/client';
+import { fetchCredentials, unlockSettingsPin } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
 
-const PIN = '532018';
 const PIN_LEN = 6;
+const SESSION_KEY = 'sierra_settings_session';
 
 // Real connection status only (no add/reveal/rotate flow yet — see
 // Settings component comment below on why that's still out of scope).
@@ -107,19 +107,51 @@ export default function Settings() {
   const credentialFor = (provider, env) =>
     (credentialsQ.data || []).find(c => c.provider === provider && c.env === env) || null;
 
+  // Decodes the "<base64 json>.<base64 hmac>" token's payload just to read
+  // its `exp` — the signature itself is opaque here and only re-verified
+  // server-side (see worker/src/auth.js's verifySettingsSession); this is a
+  // soft client-side gate only, not real enforcement (there's currently
+  // nothing on the Settings page that mutates data server-side to enforce
+  // this against — see the top-of-file comment in routes/api.js).
+  const tokenIsValid = (token) => {
+    if (!token) return false;
+    try {
+      const [payloadB64] = token.split('.');
+      const { exp } = JSON.parse(atob(payloadB64));
+      return typeof exp === 'number' && Date.now() < exp;
+    } catch {
+      return false;
+    }
+  };
+
+  // Re-unlock on remount (e.g. after navigating away and back) if the
+  // session token from an earlier PIN entry is still within its TTL —
+  // avoids re-prompting for the PIN every time Settings mounts.
+  useEffect(() => {
+    if (settingsUnlocked) return;
+    let stored = null;
+    try { stored = sessionStorage.getItem(SESSION_KEY); } catch { /* private mode etc. */ }
+    if (tokenIsValid(stored)) unlockSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handlePinInput = digit => {
     setPinError(false);
     setPinValue(v => {
       if (v.length >= PIN_LEN) return v;
       const next = v + digit;
       if (next.length === PIN_LEN) {
-        if (next === PIN) {
-          setTimeout(() => unlockSettings(), 0);
-          return '';
-        } else {
-          setPinError(true);
-          setTimeout(() => setPinValue(''), 300);
-        }
+        (async () => {
+          const token = await unlockSettingsPin(next);
+          if (token) {
+            try { sessionStorage.setItem(SESSION_KEY, token); } catch { /* private mode etc. */ }
+            unlockSettings();
+          } else {
+            setPinError(true);
+            setTimeout(() => setPinValue(''), 300);
+          }
+        })();
+        return '';
       }
       return next;
     });

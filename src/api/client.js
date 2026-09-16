@@ -5,8 +5,65 @@
 
 const BASE_URL = 'https://sierra-command-worker.vinhehemar.workers.dev';
 
+// The worker's shared API_ACCESS_TOKEN (see worker/src/auth.js) — this is a
+// single-user app, so there's no per-user login, just one token Marvin
+// generates once and pastes into the TokenGate prompt on first load (see
+// src/components/TokenGate.jsx). Kept in localStorage, not sessionStorage,
+// so it survives a browser restart; cleared automatically on a 401 so a
+// wrong/revoked token re-prompts instead of looping silently.
+const TOKEN_KEY = 'sierra_api_token';
+
+export function getApiToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setApiToken(token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // localStorage unavailable (private mode, blocked storage, ...) — the
+    // token just won't persist across reloads; not fatal for this session.
+  }
+}
+
+export function clearApiToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // see setApiToken
+  }
+}
+
+function authHeaders() {
+  const token = getApiToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Public routes never send the bearer token (there's nothing to check it
+// against on the worker side for these — see worker/src/auth.js's
+// PUBLIC_PREFIXES) and never trigger the 401-clears-token reset below, since
+// they can't 401 for a bad token in the first place.
+const PUBLIC_PATH_PREFIXES = ['/coingecko', '/twelvedata', '/api/public'];
+function isPublicPath(path) {
+  return PUBLIC_PATH_PREFIXES.some((p) => path.startsWith(p));
+}
+
+// A 401 on a protected route means the stored token is wrong or was
+// rotated server-side — clear it and reload so TokenGate re-prompts, rather
+// than leaving the app stuck silently re-sending a dead token.
+function handleUnauthorized(path) {
+  if (isPublicPath(path)) return;
+  clearApiToken();
+  if (typeof window !== 'undefined') window.location.reload();
+}
+
 async function getJson(path) {
-  const res = await fetch(`${BASE_URL}${path}`);
+  const res = await fetch(`${BASE_URL}${path}`, { headers: { ...authHeaders() } });
+  if (res.status === 401) handleUnauthorized(path);
   if (!res.ok) {
     throw new Error(`Worker antwortete mit ${res.status}`);
   }
@@ -51,9 +108,10 @@ export function fetchStrategyLogicVersions() {
 export async function runBacktest(strategyId, symbol, start, end) {
   const res = await fetch(`${BASE_URL}/backtest/run`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ strategy_id: strategyId, symbol, start, end }),
   });
+  if (res.status === 401) handleUnauthorized('/backtest/run');
   let body;
   try {
     body = await res.json();
@@ -81,14 +139,32 @@ export function fetchCredentials() {
 export async function putStrategySettings(strategyId, settings) {
   const res = await fetch(`${BASE_URL}/api/strategy-settings/${encodeURIComponent(strategyId)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(settings),
   });
+  if (res.status === 401) handleUnauthorized('/api/strategy-settings');
   if (!res.ok) {
     throw new Error(`Worker antwortete mit ${res.status}`);
   }
   const body = await res.json();
   return body.data;
+}
+
+// PIN unlock for the Settings page — see worker/src/routes/api.js's
+// handleSettingsUnlock. Not wrapped by handleUnauthorized: a wrong PIN here
+// is an expected 401 the caller (Settings.jsx) handles itself as "falscher
+// PIN", not "the API token is bad" (this route is itself protected by the
+// bearer token like everything else, so a token problem would already have
+// surfaced elsewhere first).
+export async function unlockSettingsPin(pin) {
+  const res = await fetch(`${BASE_URL}/api/settings/unlock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ pin }),
+  });
+  if (!res.ok) return null;
+  const body = await res.json();
+  return body.data?.token || null;
 }
 
 // Live current prices for open-trade P/L, keyed by our own symbol strings
@@ -128,9 +204,10 @@ export function fetchForexIndexPrices(symbols) {
 export async function patchStrategyActive(strategyId, active) {
   const res = await fetch(`${BASE_URL}/api/strategies/${encodeURIComponent(strategyId)}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ active }),
   });
+  if (res.status === 401) handleUnauthorized('/api/strategies');
   if (!res.ok) {
     throw new Error(`Worker antwortete mit ${res.status}`);
   }
