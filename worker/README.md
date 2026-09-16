@@ -105,3 +105,12 @@ egress) — that would mean actively evading Binance's bot/abuse protection,
 which we're not going to do. Revisit once the *live* Binance integration is
 being built: live endpoints may not have the same WAF behavior as testnet,
 so re-check there before assuming this still applies.
+
+**Re-tested 2026-09-16** after futures trading was enabled account-side on
+the testnet account (no external KYC step involved) — same result. 4
+consecutive requests each against the deployed Worker for both
+`/binance/candles` and `/binance/account-status`: 8/8 still come back `403`
+from CloudFront. The account-side futures permission doesn't change
+anything here, since the block happens at CloudFront before the request
+reaches Binance's API/account layer at all — it's not gated on what the API
+key is allowed to do.
