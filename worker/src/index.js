@@ -10,6 +10,7 @@ import { handleBacktestRoute } from './routes/backtest.js';
 import { handleWavescoutPriceRoute } from './routes/wavescout-price.js';
 import { withCors, handlePreflight } from './cors.js';
 import { checkOpenTrades } from './cron/checkOpenTrades.js';
+import { isPublicPath, checkBearerToken, unauthorized } from './auth.js';
 
 export default {
   async fetch(request, env) {
@@ -19,6 +20,37 @@ export default {
 
     const url = new URL(request.url);
     let response;
+
+    // Single-user bearer-token gate: everything except the explicitly public
+    // prefixes (see auth.js's PUBLIC_PREFIXES) requires
+    // `Authorization: Bearer <API_ACCESS_TOKEN>`. /webhook is inbound from an
+    // external signal source (TradingView), not the frontend, so it checks
+    // its own separate secret instead — see routes/webhook.js's
+    // checkWebhookSecret and its comment for why. Checked before any route
+    // handler runs, so an unauthenticated request never reaches D1 or an
+    // upstream call.
+    if (!isPublicPath(url.pathname) && !url.pathname.startsWith('/webhook')) {
+      if (!checkBearerToken(request, env)) {
+        return withCors(unauthorized(), request, env);
+      }
+    }
+
+    // /webhook/<strategy> is called by an external signal source (TradingView
+    // alerts), never by the frontend, so it can't carry the frontend's
+    // Authorization bearer token — TradingView alert bodies only support a
+    // fixed text payload, no custom headers. If WEBHOOK_SECRET is configured
+    // (`wrangler secret put WEBHOOK_SECRET`), require it as a `?secret=`
+    // query param, matching how TradingView alert URLs are configured
+    // (URL + static JSON body, no headers). Left unauthenticated when unset,
+    // same as today — see routes/webhook.js's top comment: no real
+    // TradingView alerts point at this yet, so there's nothing this would
+    // protect against before that wiring exists, and hardening it further can
+    // wait until it does.
+    if (url.pathname.startsWith('/webhook') && env.WEBHOOK_SECRET) {
+      if (url.searchParams.get('secret') !== env.WEBHOOK_SECRET) {
+        return withCors(unauthorized(), request, env);
+      }
+    }
 
     try {
       if (url.pathname === '/health') {

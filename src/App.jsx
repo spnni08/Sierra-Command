@@ -12,6 +12,7 @@ import LogPage from './pages/LogPage';
 import AutoTrade from './pages/AutoTrade';
 import Settings from './pages/Settings';
 import Auswertung from './pages/Auswertung';
+import TokenGate from './components/TokenGate';
 
 function Shell() {
   const { theme } = useApp();
@@ -48,8 +49,10 @@ function Shell() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <Shell />
-    </AppProvider>
+    <TokenGate>
+      <AppProvider>
+        <Shell />
+      </AppProvider>
+    </TokenGate>
   );
 }
