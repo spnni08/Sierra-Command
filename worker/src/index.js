@@ -30,7 +30,7 @@ export default {
     // handler runs, so an unauthenticated request never reaches D1 or an
     // upstream call.
     if (!isPublicPath(url.pathname) && !url.pathname.startsWith('/webhook')) {
-      if (!checkBearerToken(request, env)) {
+      if (!(await checkBearerToken(request, env))) {
         return withCors(unauthorized(), request, env);
       }
     }

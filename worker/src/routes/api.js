@@ -8,10 +8,20 @@
 // there's no chicken-and-egg problem to route around by leaving this one
 // route open.
 
-import { signSettingsSession } from '../auth.js';
+import { signSettingsSession, signAppSession, hashPassword } from '../auth.js';
 
 export async function handleApiRoute(request, url, env) {
   const path = url.pathname.replace(/^\/api/, '');
+
+  // Username/password login (fixed single account — see auth.js's
+  // PUBLIC_PREFIXES comment for why this route has to stay unauthenticated).
+  // Replaces the old raw-API_ACCESS_TOKEN paste flow (TokenGate.jsx) with a
+  // real login form; the token it hands back is a signed session token that
+  // checkBearerToken (auth.js) accepts everywhere else, same as a PIN-unlock
+  // token.
+  if (path === '/auth/login' && request.method === 'POST') {
+    return handleLogin(request, env);
+  }
 
   // PIN unlock for the Settings page. The PIN itself (SETTINGS_PIN) never
   // leaves the worker — a correct guess gets back a short-lived HMAC-signed
@@ -68,6 +78,42 @@ export async function handleApiRoute(request, url, env) {
   }
 
   return Response.json({ error: 'not_found', path }, { status: 404 });
+}
+
+async function handleLogin(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 });
+  }
+
+  const username = typeof body?.username === 'string' ? body.username : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
+
+  if (!env.APP_USERNAME || !env.APP_PASSWORD_HASH) {
+    // Misconfigured deploy (secrets never set) — fail closed.
+    return Response.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
+  // Hash the submitted password unconditionally, even on a missing/blank
+  // field or an already-wrong username, before comparing anything — so a
+  // bad username doesn't short-circuit the response before the (roughly
+  // constant-cost) hashing work below, which would otherwise make username
+  // correctness observable from response timing alone.
+  const submittedHash = await hashPassword(password);
+
+  const usernameOk = username === env.APP_USERNAME;
+  const passwordOk = submittedHash === env.APP_PASSWORD_HASH;
+
+  if (!usernameOk || !passwordOk) {
+    // Deliberately generic — never reveal which of the two was wrong.
+    return Response.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
+  const token = await signAppSession(env);
+  const expires_at = Date.now() + 30 * 60 * 1000; // matches auth.js's SESSION_TTL_MS
+  return Response.json({ data: { token, expires_at } });
 }
 
 async function handleSettingsUnlock(request, env) {
