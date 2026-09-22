@@ -5,12 +5,15 @@
 
 const BASE_URL = 'https://sierra-command-worker.vinhehemar.workers.dev';
 
-// The worker's shared API_ACCESS_TOKEN (see worker/src/auth.js) — this is a
-// single-user app, so there's no per-user login, just one token Marvin
-// generates once and pastes into the TokenGate prompt on first load (see
-// src/components/TokenGate.jsx). Kept in localStorage, not sessionStorage,
-// so it survives a browser restart; cleared automatically on a 401 so a
-// wrong/revoked token re-prompts instead of looping silently.
+// Bearer token used on every protected Worker request (see
+// worker/src/auth.js's checkBearerToken). Since PR #58 this is obtained by
+// logging in with the fixed username/password (see
+// src/components/LoginGate.jsx, POST /api/auth/login) rather than pasting
+// the raw API_ACCESS_TOKEN — the value stored here is the short-lived
+// signed session token that login hands back, which the worker accepts
+// alongside the raw token. Kept in localStorage, not sessionStorage, so it
+// survives a browser restart; cleared automatically on a 401 so an
+// expired/revoked token re-prompts (LoginGate) instead of looping silently.
 const TOKEN_KEY = 'sierra_api_token';
 
 export function getApiToken() {
@@ -59,6 +62,26 @@ function handleUnauthorized(path) {
   if (isPublicPath(path)) return;
   clearApiToken();
   if (typeof window !== 'undefined') window.location.reload();
+}
+
+// Logs in against the fixed single account and returns the session token on
+// success, or null on any failure (bad credentials, network error, ...) —
+// LoginGate renders a generic inline error either way, matching the
+// worker's deliberately generic 401 body (never reveals which field was
+// wrong).
+export async function login(username, password) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body.data?.token || null;
+  } catch {
+    return null;
+  }
 }
 
 async function getJson(path) {
