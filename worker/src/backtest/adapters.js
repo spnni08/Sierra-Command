@@ -57,6 +57,7 @@
 import { ema, rsi, emaBollingerBands, bollingerBands, sma, rollingMax, rollingMin, adx as computeAdx, atr as computeAtr, mfi as computeMfi } from './indicators.js';
 import { buildCryptoIctSmc } from './ictSmcAdapter.js';
 import { buildCryptoSrVolume } from './srDynamicAdapter.js';
+import { buildIctSweepMss } from './ictSweepMssAdapter.js';
 
 // Edge-triggered ta.crossunder(close, lowerBand) / ta.crossover(close,
 // upperBand), same convention buildCryptoFlawlessVictoryV1 already uses:
@@ -718,6 +719,12 @@ export const ADAPTER_WARMUP_BARS = {
   // factor simply won't fire on real /ohlc-backed backtests; see ADAPTER_METADATA.
   crypto_sr_volume: 55,
   crypto_sr_volume_sl: 55,
+  // ict_sweep_mss: swing confirmation needs swingRight(3, default) trailing
+  // bars plus ATR(14) warmup — 45 mirrors crypto_ict_smc's own margin (its
+  // swingRight is 5, wider than this strategy's default of 3, so 45 is even
+  // more generous headroom here).
+  ict_sweep_mss: 45,
+  ict_sweep_mss_sl: 45,
 };
 
 // Informational only (see candles.js's OHLC_DAYS_BUCKETS/pickOhlcDaysBucket
@@ -743,6 +750,8 @@ export const ADAPTER_METADATA = {
   crypto_ict_smc_sl: { maxWindowDays: 365, note: 'swing confirmation needs 5 trailing bars plus ATR(14) warmup — clears every /ohlc bucket except the very shortest (days=1)' },
   crypto_sr_volume: { maxWindowDays: 365, note: 'ATR(50)+EMA(50) warmup (55 bars) only clears the days=365 bucket (~92 four-day bars) — days=90 (23 bars) and days=180 (45 bars) fail with insufficient_candle_history' },
   crypto_sr_volume_sl: { maxWindowDays: 365, note: 'ATR(50)+EMA(50) warmup (55 bars) only clears the days=365 bucket (~92 four-day bars) — days=90 (23 bars) and days=180 (45 bars) fail with insufficient_candle_history' },
+  ict_sweep_mss: { maxWindowDays: 365, note: 'crypto candles here are CoinGecko /ohlc (4h bars up to 30 days, else 4-day bars) — the strategy\'s nominal 15m timeframe is not obtainable for BTC/ETH/SOL from this worker\'s data sources; see ICT_SWEEP_MSS_CAVEAT. Forex/index (EURUSD, SPX500, NAS100) backtests DO run on real Twelve Data 15m candles.' },
+  ict_sweep_mss_sl: { maxWindowDays: 365, note: 'crypto candles here are CoinGecko /ohlc (4h bars up to 30 days, else 4-day bars) — the strategy\'s nominal 15m timeframe is not obtainable for BTC/ETH/SOL from this worker\'s data sources; see ICT_SWEEP_MSS_CAVEAT. Forex/index (EURUSD, SPX500, NAS100) backtests DO run on real Twelve Data 15m candles.' },
 };
 
 export const ADAPTERS = {
@@ -774,6 +783,8 @@ export const ADAPTERS = {
   crypto_ict_smc_sl: buildCryptoIctSmc,
   crypto_sr_volume: buildCryptoSrVolume,
   crypto_sr_volume_sl: buildCryptoSrVolume,
+  ict_sweep_mss: buildIctSweepMss,
+  ict_sweep_mss_sl: buildIctSweepMss,
 };
 
 // Strategies whose adapter above is a documented simplification rather than
@@ -788,6 +799,8 @@ const ICT_SMC_CAVEAT =
   'Swing/BOS-CHoCH/order-block/FVG detection ports the algorithms validated in tradingview-bot/backtest/ict_smc/concepts.py, on real O/H/L/C from CoinGecko /ohlc. Simplified to a single timeframe: no separate HTF (4H/1H) key-level zones or London/NY session gate (htf_zone_touch is approximated as "price is inside an active LTF order block or FVG of the requested direction"), and no SMT divergence leg (needs a second correlated symbol\'s aligned swings) — confirmations_count only counts {bos, ob}, still gated at min_confirmations=2 so both must fire together.';
 const SR_DYNAMIC_CAVEAT =
   'Uses "Support & Resistance Dynamic" (LuxAlgo) instead of this strategy\'s originally-intended true Volume Profile (VAL/VAH/POC) — same substitute tradingview-bot/backtest/config.py adopted on 2026-07-24 for the same reason: Volume Profile needs intrabar volume-at-price distribution CoinGecko\'s daily aggregate volume can\'t provide, while S&R Dynamic only needs real high/low/close (from CoinGecko /ohlc). The trend filter also reads EMA(50), not EMA(200) — a true EMA(200) never produces a finite value on /ohlc\'s much shorter real-candle series (see ADAPTER_WARMUP_BARS).';
+const ICT_SWEEP_MSS_CAVEAT =
+  'Timeframe: this strategy\'s intended default is 15m, but neither of this worker\'s crypto data sources can provide it for BTC/ETH/SOL — CoinGecko\'s free /ohlc never goes finer than 4h (and only for windows <=30 days; longer windows fall back to 4-day bars), and Binance (the only other candidate source) is blocked in this deployment (Futures Testnet: confirmed 403 from CloudFront\'s WAF; mainnet klines: confirmed 451 from this project\'s network path). Crypto backtests for this strategy therefore run on CoinGecko /ohlc\'s coarsest-available real O/H/L/C instead. Forex/index (EURUSD, SPX500, NAS100) backtests DO run on genuine Twelve Data 15m candles — see candles.js\'s fetchForexIndexCandles. The optional HTF bias filter (default OFF) is a same-series in-memory resample (grouping this run\'s own bars into ~4h buckets and reading an EMA(10) slope), not a second live 4h feed — see ictSweepMssAdapter.js\'s computeHtfBiasAt.';
 export const PARTIAL_ADAPTERS = {
   crypto_sr_bollinger:
     'Real Pine trigger needs a wick to pierce the Bollinger band while the close stays inside (true intrabar bounce). This backtest uses daily close-only candles (no real intrabar range), so a close-only 2-bar cross-back-inside-the-band proxy is used instead — same "rejection then reclaim" idea, but triggers on different/fewer bars than the real intrabar strategy would.',
@@ -801,6 +814,8 @@ export const PARTIAL_ADAPTERS = {
   crypto_ict_smc_sl: ICT_SMC_CAVEAT,
   crypto_sr_volume: SR_DYNAMIC_CAVEAT,
   crypto_sr_volume_sl: SR_DYNAMIC_CAVEAT,
+  ict_sweep_mss: ICT_SWEEP_MSS_CAVEAT,
+  ict_sweep_mss_sl: ICT_SWEEP_MSS_CAVEAT,
 };
 
 export function getAdapter(strategyId) {

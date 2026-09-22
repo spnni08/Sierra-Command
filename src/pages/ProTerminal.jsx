@@ -25,10 +25,14 @@ const BACKTESTABLE_STRATEGY_IDS = new Set([
   'crypto_sr_bollinger', 'crypto_sr_bollinger_sl', // partial adapter — flagged via the run response's partialAdapter field, not here
   'crypto_mfi_engulfing', 'crypto_mfi_engulfing_sl', // partial adapter (real /ohlc candles, but this backtest's own engulfing-pattern geometry — see adapters.js)
   'crypto_holy_grail_adx_sma_bb', 'crypto_holy_grail_adx_sma_bb_sl', // partial adapter (real /ohlc candles + wick-touch, but this backtest's own hammer/doji/engulfing geometry — see adapters.js)
+  'ict_sweep_mss', 'ict_sweep_mss_sl', // partial adapter — crypto legs run on CoinGecko's coarsest real O/H/L/C, not the strategy's nominal 15m (see adapters.js's ICT_SWEEP_MSS_CAVEAT); forex/index legs run on real Twelve Data 15m candles
 ]);
 
-// All backtestable strategies are crypto-only today (see adapters.js), and
-// the backtest engine only knows these three crypto symbols (candles.js).
+// Default symbol choices for a strategy with no explicit asset_classes (every
+// strategy above ict_sweep_mss). ict_sweep_mss/_sl instead offer the
+// selected strategy's own `asset_classes` from the /api/strategies row (see
+// symbolOptions below) — the first strategy in this app backtestable against
+// forex/index (EURUSD, SPX500, NAS100), not just the three crypto symbols.
 const BACKTEST_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
 
 function describeBacktestError(body) {
@@ -260,20 +264,31 @@ export default function ProTerminal() {
   const effectiveStrategyId = btStrategyId || backtestableStrategies[0]?.id || '';
   const selectedIsBacktestable = BACKTESTABLE_STRATEGY_IDS.has(effectiveStrategyId);
 
+  // Symbol choices for whichever strategy is selected: the selected
+  // strategy's own `asset_classes` (from /api/strategies) when it declares
+  // one, else the crypto-only BACKTEST_SYMBOLS default every strategy before
+  // ict_sweep_mss implicitly relied on.
+  const selectedStrategyRow = allStrategies.find((s) => s.id === effectiveStrategyId);
+  const symbolOptions =
+    Array.isArray(selectedStrategyRow?.asset_classes) && selectedStrategyRow.asset_classes.length > 0
+      ? selectedStrategyRow.asset_classes
+      : BACKTEST_SYMBOLS;
+  const effectiveBtSymbol = symbolOptions.includes(btSymbol) ? btSymbol : symbolOptions[0];
+
   const handleRunBacktest = useCallback(async () => {
     if (!effectiveStrategyId) return;
     setBtLoading(true);
     setBtNetworkError(null);
     setBtResult(null);
     try {
-      const body = await runBacktest(effectiveStrategyId, btSymbol);
+      const body = await runBacktest(effectiveStrategyId, effectiveBtSymbol);
       setBtResult(body);
     } catch (err) {
       setBtNetworkError(err);
     } finally {
       setBtLoading(false);
     }
-  }, [effectiveStrategyId, btSymbol]);
+  }, [effectiveStrategyId, effectiveBtSymbol]);
 
   const manualRun = btResult?.data ?? null;
   // The metrics panel prefers a just-run result over the last stored run so
@@ -408,11 +423,11 @@ export default function ProTerminal() {
 
           <div style={{ display: 'flex', gap: 6 }}>
             <select
-              value={btSymbol}
+              value={effectiveBtSymbol}
               onChange={(e) => setBtSymbol(e.target.value)}
               style={{ flex: 1, background: 'var(--panel3)', border: '1px solid var(--line2)', color: 'var(--txt)', fontFamily: 'inherit', fontSize: 10, padding: '4px 6px' }}
             >
-              {BACKTEST_SYMBOLS.map((sym) => <option key={sym} value={sym}>{sym}</option>)}
+              {symbolOptions.map((sym) => <option key={sym} value={sym}>{sym}</option>)}
             </select>
             <button
               onClick={handleRunBacktest}

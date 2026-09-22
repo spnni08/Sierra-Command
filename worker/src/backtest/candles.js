@@ -154,15 +154,33 @@ async function fetchCryptoRealOhlcCandles(symbol, startDate, endDate, env) {
     .filter((c) => c.timestamp >= startMs && c.timestamp <= endMs);
 }
 
-async function fetchForexIndexCandles(symbol, startDate, endDate, env) {
+// `interval` defaults to '1day' (every caller before ict_sweep_mss used
+// exactly that, implicitly) — pass '15min' for a strategy that needs real
+// intraday bars (see INTRADAY_STRATEGY_IDS below). Twelve Data's date-only
+// start_date/end_date (no time component) work fine for '1day'; for an
+// intraday interval they're passed as full UTC datetimes instead, since a
+// date-only bound on an intraday series would otherwise only resolve to
+// midnight on those dates. outputsize is capped at Twelve Data's own
+// per-call maximum (5000) so one call reliably covers the requested range
+// without silent truncation — callers needing more than 5000 bars should
+// request a narrower window rather than rely on pagination this function
+// doesn't do.
+async function fetchForexIndexCandles(symbol, startDate, endDate, env, interval = '1day') {
   if (!env.TWELVE_DATA_API_KEY) throw new Error('twelvedata_not_configured');
   const tdSymbol = FOREX_INDEX_SYMBOLS[symbol];
+  const isIntraday = interval !== '1day';
 
   const upstream = new URL(`${TWELVE_DATA_API}/time_series`);
   upstream.searchParams.set('symbol', tdSymbol);
-  upstream.searchParams.set('interval', '1day');
-  upstream.searchParams.set('start_date', startDate.toISOString().slice(0, 10));
-  upstream.searchParams.set('end_date', endDate.toISOString().slice(0, 10));
+  upstream.searchParams.set('interval', interval);
+  if (isIntraday) {
+    upstream.searchParams.set('start_date', startDate.toISOString().slice(0, 19).replace('T', ' '));
+    upstream.searchParams.set('end_date', endDate.toISOString().slice(0, 19).replace('T', ' '));
+    upstream.searchParams.set('outputsize', '5000');
+  } else {
+    upstream.searchParams.set('start_date', startDate.toISOString().slice(0, 10));
+    upstream.searchParams.set('end_date', endDate.toISOString().slice(0, 10));
+  }
   upstream.searchParams.set('apikey', env.TWELVE_DATA_API_KEY);
 
   const res = await fetch(upstream.toString());
@@ -200,7 +218,21 @@ export const REAL_OHLC_STRATEGY_IDS = new Set([
   // high/low for its ATR and wick-touch check (see backtest/srDynamicAdapter.js).
   'crypto_sr_volume',
   'crypto_sr_volume_sl',
+  // ict_sweep_mss needs real high/low wicks for liquidity-sweep detection
+  // (see backtest/ictSweepMssAdapter.js) — impossible on flat /market_chart
+  // OHLC, same reason as crypto_ict_smc above.
+  'ict_sweep_mss',
+  'ict_sweep_mss_sl',
 ]);
+
+// Strategies whose forex/index backtest should use real intraday (15min)
+// Twelve Data candles instead of the '1day' every other caller of
+// fetchForexIndexCandles implicitly used before this strategy existed — see
+// that function's `interval` parameter. Kept as its own set (not reusing
+// REAL_OHLC_STRATEGY_IDS, which is crypto-/ohlc-specific vocabulary) so a
+// future forex/index strategy that's fine with daily bars doesn't have to
+// opt into this too.
+export const INTRADAY_FOREX_STRATEGY_IDS = new Set(['ict_sweep_mss', 'ict_sweep_mss_sl']);
 
 /**
  * Fetches and returns chronologically-sorted candles for the given
@@ -216,6 +248,8 @@ export async function fetchHistoricalCandles(symbol, startDate, endDate, env, st
       ? fetchCryptoRealOhlcCandles(symbol, startDate, endDate, env)
       : fetchCryptoCandles(symbol, startDate, endDate, env);
   }
-  if (cls === 'forex_index') return fetchForexIndexCandles(symbol, startDate, endDate, env);
+  if (cls === 'forex_index') {
+    return fetchForexIndexCandles(symbol, startDate, endDate, env, INTRADAY_FOREX_STRATEGY_IDS.has(strategyId) ? '15min' : '1day');
+  }
   throw new Error(`unsupported_symbol:${symbol}`);
 }
