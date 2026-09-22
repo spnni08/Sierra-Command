@@ -111,4 +111,19 @@ describe('POST /api/auth/login', () => {
     );
     expect(res.status).toBe(401);
   });
+
+  it('the issued token still authorizes a protected route when API_ACCESS_TOKEN is unset (login-only deploy)', async () => {
+    const env = await envWithHash({ API_ACCESS_TOKEN: undefined });
+    const loginRes = await worker.fetch(loginRequest({ username: 'WaveWatch', password: TEST_PASSWORD }), env);
+    expect(loginRes.status).toBe(200);
+    const { data } = await loginRes.json();
+
+    const protectedRes = await worker.fetch(
+      new Request('https://worker.test/api/strategies', {
+        headers: { Authorization: `Bearer ${data.token}` },
+      }),
+      env
+    );
+    expect(protectedRes.status).toBe(200);
+  });
 });

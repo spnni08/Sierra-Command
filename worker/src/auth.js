@@ -47,16 +47,17 @@ export function isPublicPath(pathname) {
 //     actually authorize the rest of the app's API calls instead of needing
 //     a second, parallel auth system.
 export async function checkBearerToken(request, env) {
-  if (!env.API_ACCESS_TOKEN) {
-    // Misconfigured deploy (secret never set) — fail closed rather than
-    // silently running unauthenticated.
-    return false;
-  }
   const header = request.headers.get('Authorization') || '';
   const match = header.match(/^Bearer (.+)$/);
   if (!match) return false;
   const token = match[1];
-  if (token === env.API_ACCESS_TOKEN) return true;
+  // Each of the three checks below is independently gated on its own secret
+  // being configured, so a deploy that only sets up the username/password
+  // login flow (APP_PASSWORD_HASH) and never sets the legacy API_ACCESS_TOKEN
+  // still authorizes the session tokens that flow issues — a deploy missing
+  // ALL of these secrets still fails closed, since every branch below is
+  // then skipped and the function falls through to `return false`.
+  if (env.API_ACCESS_TOKEN && token === env.API_ACCESS_TOKEN) return true;
   // Not the raw token — check whether it's a valid signed session token from
   // either the PIN-unlock flow or the username/password login flow. Try both
   // secrets; a token only verifies against the one it was signed with.
