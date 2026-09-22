@@ -311,41 +311,47 @@ INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_defini
     '{"factors":["liquidity_sweep","displacement","mss","fvg_present","min_rr_ok","htf_bias_ok"],"exit_mode":"levels_trailing","timeframe":"15m","trailing_anchor":"swing_point_breakeven_then_trail"}',
     '2026-09-22 09:00:01', '2026-09-22 09:00:01');
 
-INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold, params_json) VALUES
-  ('crypto_baseline', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_baseline_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_sr_volume', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_sr_volume_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_orderflow_breakout', 0.25, '[]', 0.7, 0.5, '{}'),
-  ('crypto_orderflow_breakout_sl', 0.25, '[]', 0.7, 0.5, '{}'),
-  ('crypto_ichimoku_breakout', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_ichimoku_breakout_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_sr_bollinger', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_sr_bollinger_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_sr_exclusion', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_sr_exclusion_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_ict_smc', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_ict_smc_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_flawless_victory', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_flawless_victory_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_flawless_victory_v2', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_flawless_victory_v3', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_mfi_engulfing', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_mfi_engulfing_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_holy_grail_adx_sma_bb', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_holy_grail_adx_sma_bb_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_bb_rsi_trendfilter', 1.0, '[]', 0.7, 0.5, '{}'),
-  ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5, '{}'),
-  -- Defaults mirror ictSweepMssAdapter.js's DEFAULT_PARAMS exactly — this
-  -- row exists so the values are visible/editable via
-  -- PUT /api/strategy-settings/:id without needing to read the adapter
-  -- source, not because the adapter can't fall back on its own (it does,
-  -- via `{ ...DEFAULT_PARAMS, ...settings }`, whenever params_json is '{}'
-  -- or missing).
-  ('ict_sweep_mss', 1.0, '[]', 0.7, 0.5,
-    '{"swingLeft":3,"swingRight":3,"atrLen":14,"displacementAtrMult":1.5,"displacementBodyRatioMin":0.6,"displacementMaxBars":5,"mssMaxBars":10,"fvgMinAtrMult":0.2,"entryMode":"ce","slAtrBuffer":0.1,"minRR":1.5,"fillMaxBars":20,"htfBiasFilter":false,"htfTimeframeMinutes":240}'),
-  ('ict_sweep_mss_sl', 1.0, '[]', 0.7, 0.5,
-    '{"swingLeft":3,"swingRight":3,"atrLen":14,"displacementAtrMult":1.5,"displacementBodyRatioMin":0.6,"displacementMaxBars":5,"mssMaxBars":10,"fvgMinAtrMult":0.2,"entryMode":"ce","slAtrBuffer":0.1,"minRR":1.5,"fillMaxBars":20,"htfBiasFilter":false,"htfTimeframeMinutes":240}');
+-- Deliberately does NOT list params_json here, even though the CREATE TABLE
+-- above declares it: on the already-live remote D1, this file's own CREATE
+-- TABLE IF NOT EXISTS is a no-op (the table already exists without that
+-- column), and this INSERT runs BEFORE worker-deploy.yml's later "Migrate
+-- existing table columns" step ever gets a chance to ALTER TABLE ADD COLUMN
+-- it in — referencing params_json here would make ALL these INSERTs fail
+-- with "no such column" on every deploy until the migration step (which
+-- can't run first; it comes after this file in the workflow). Every other
+-- column added to an existing table since this file's original seed (exit_
+-- mode, win_rate, trade_count) followed the same rule: never referenced in
+-- a seed INSERT, only in CREATE TABLE (harmless no-op on remote) and in
+-- application code. ict_sweep_mss/_sl's actual params_json defaults are set
+-- by a dedicated UPDATE step in worker-deploy.yml instead, which runs after
+-- the ALTER TABLE step.
+INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold) VALUES
+  ('crypto_baseline', 1.0, '[]', 0.7, 0.5),
+  ('crypto_baseline_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_volume', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_volume_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_orderflow_breakout', 0.25, '[]', 0.7, 0.5),
+  ('crypto_orderflow_breakout_sl', 0.25, '[]', 0.7, 0.5),
+  ('crypto_ichimoku_breakout', 1.0, '[]', 0.7, 0.5),
+  ('crypto_ichimoku_breakout_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_bollinger', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_bollinger_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_exclusion', 1.0, '[]', 0.7, 0.5),
+  ('crypto_sr_exclusion_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_ict_smc', 1.0, '[]', 0.7, 0.5),
+  ('crypto_ict_smc_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_flawless_victory', 1.0, '[]', 0.7, 0.5),
+  ('crypto_flawless_victory_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_flawless_victory_v2', 1.0, '[]', 0.7, 0.5),
+  ('crypto_flawless_victory_v3', 1.0, '[]', 0.7, 0.5),
+  ('crypto_mfi_engulfing', 1.0, '[]', 0.7, 0.5),
+  ('crypto_mfi_engulfing_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_holy_grail_adx_sma_bb', 1.0, '[]', 0.7, 0.5),
+  ('crypto_holy_grail_adx_sma_bb_sl', 1.0, '[]', 0.7, 0.5),
+  ('crypto_bb_rsi_trendfilter', 1.0, '[]', 0.7, 0.5),
+  ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5),
+  ('ict_sweep_mss', 1.0, '[]', 0.7, 0.5),
+  ('ict_sweep_mss_sl', 1.0, '[]', 0.7, 0.5);
 
 -- No seed trades/activity_log/backtest_runs rows here on purpose — see the
 -- DELETEs above. From here on these tables only ever hold rows written by
