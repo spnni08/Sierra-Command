@@ -131,6 +131,26 @@ jobs:
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # ict_sweep_mss/_sl's default logic-threshold overrides — deliberately
+      # a separate step from both "Apply D1 schema" (whose seed INSERT can't
+      # reference params_json at all — see schema.sql's comment above that
+      # INSERT) and the ALTER TABLE step above (which only adds the column,
+      # empty). Only touches rows still at the column's own default ('{}') so
+      # re-running this on every deploy never clobbers a value someone has
+      # since customized via PUT /api/strategy-settings/:id. Mirrors
+      # ictSweepMssAdapter.js's DEFAULT_PARAMS exactly — this row exists so
+      # the values are visible/editable without reading the adapter source,
+      # not because the adapter can't fall back on its own (it does, via
+      # `{ ...DEFAULT_PARAMS, ...settings }`, whenever params_json is '{}').
+      - name: Set ict_sweep_mss default params_json
+        run: |
+          npx wrangler d1 execute sierra-command-db --remote --command "
+            UPDATE strategy_settings SET params_json =
+              '{\"swingLeft\":3,\"swingRight\":3,\"atrLen\":14,\"displacementAtrMult\":1.5,\"displacementBodyRatioMin\":0.6,\"displacementMaxBars\":5,\"mssMaxBars\":10,\"fvgMinAtrMult\":0.2,\"entryMode\":\"ce\",\"slAtrBuffer\":0.1,\"minRR\":1.5,\"fillMaxBars\":20,\"htfBiasFilter\":false,\"htfTimeframeMinutes\":240}'
+              WHERE strategy_id IN ('ict_sweep_mss', 'ict_sweep_mss_sl') AND params_json = '{}';
+          "
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # Re-derives every strategy's logic hash straight from the current
       # backtest/adapters.js source and applies it as one idempotent SQL
       # file — see worker/scripts/generate-logic-invalidation-sql.mjs and
