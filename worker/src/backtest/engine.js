@@ -156,16 +156,35 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
     };
   }
 
+  // Per-strategy configurable thresholds, read from strategy_settings.
+  // params_json (see worker/schema.sql, routes/api.js's putStrategySettings)
+  // and passed as an adapter's optional 2nd argument — every existing
+  // adapter builder only declares (candles) in its signature, so this extra
+  // argument is a silent no-op for all of them (purely additive). Only
+  // ict_sweep_mss/_sl currently reads it (backtest/ictSweepMssAdapter.js).
+  let adapterSettings = {};
+  try {
+    const settingsRow = await env.DB.prepare('SELECT params_json FROM strategy_settings WHERE strategy_id = ?')
+      .bind(strategyId)
+      .first();
+    if (settingsRow?.params_json) adapterSettings = JSON.parse(settingsRow.params_json);
+  } catch {
+    // No row, no column (pre-migration D1), or bad JSON — every adapter
+    // falls back to its own built-in defaults when settings are empty.
+  }
+
   // An adapter is normally just signalAt(i, direction) (legacy shape, used
   // by every fixed/trailing-SL strategy). A strategy that opts into
   // signal-based exits (see exit.mode === 'signal' below) instead returns
   // { signalAt, closeSignalAt } — closeSignalAt(i) tells the engine "close
   // the open position on this bar", independent of any SL/TP. Purely
   // additive: every existing adapter still returns a bare function and never
-  // touches this path.
-  const built = adapter(candles);
+  // touches this path. trailAnchorAt (also optional) is read only by
+  // exit.mode:'levels_trailing' below.
+  const built = adapter(candles, adapterSettings);
   const signalAt = typeof built === 'function' ? built : built.signalAt;
   const closeSignalAt = typeof built === 'function' ? null : built.closeSignalAt ?? null;
+  const trailAnchorAt = typeof built === 'function' ? null : built.trailAnchorAt ?? null;
   const atrSeries = strategy.exit.mode === 'trailing' ? computeAtr(candles, strategy.exit.trailing.atrLen) : null;
   const volume = VOLUME[upperSymbol] ?? 1;
   const windowStartMs = window.start.getTime();
@@ -229,6 +248,43 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       continue;
     }
 
+    if (open && strategy.exit.mode === 'levels_trailing') {
+      // ict_sweep_mss_sl (rule 10): once price has moved 1R in the trade's
+      // favor, move SL to breakeven (entry), then ratchet it forward under
+      // every newly-confirmed swing low (long) / over every newly-confirmed
+      // swing high (short) — never loosening. TP stays the structure-derived
+      // level from entry (same "trailing variant keeps the fixed TP as an
+      // emergency cap" convention documented in strategies/shared.js).
+      const hitSl = open.direction === 'long' ? candle.low <= open.sl : candle.high >= open.sl;
+      const hitTp = open.direction === 'long' ? candle.high >= open.tp : candle.low <= open.tp;
+
+      if (!hitSl && !hitTp) {
+        const riskDistance = Math.abs(open.entryFill - open.initialSl);
+        const favorable = open.direction === 'long' ? candle.close - open.entryFill : open.entryFill - candle.close;
+        if (riskDistance > 0 && favorable >= riskDistance) {
+          open.sl = open.direction === 'long' ? Math.max(open.sl, open.entryFill) : Math.min(open.sl, open.entryFill);
+        }
+        if (trailAnchorAt) {
+          const anchor = trailAnchorAt(i, open.direction);
+          if (Number.isFinite(anchor)) {
+            open.sl = open.direction === 'long' ? Math.max(open.sl, anchor) : Math.min(open.sl, anchor);
+          }
+        }
+      }
+
+      if (hitSl || hitTp) {
+        const rawExit = hitSl ? open.sl : open.tp;
+        const fillExit = exitCost(upperSymbol, assetClass, rawExit, open.direction);
+        let pnl = (open.direction === 'long' ? fillExit - open.entryFill : open.entryFill - fillExit) * volume;
+        if (assetClass === 'crypto') {
+          pnl -= cryptoTakerFee(upperSymbol, open.entryFill * volume) + cryptoTakerFee(upperSymbol, fillExit * volume);
+        }
+        trades.push({ ...open, exitFill: fillExit, exitIndex: i, reason: hitSl ? 'sl' : 'tp', pnl });
+        open = null;
+      }
+      continue;
+    }
+
     if (open) {
       const hitSl = open.direction === 'long' ? candle.low <= open.sl : candle.high >= open.sl;
       const hitTp = open.direction === 'long' ? candle.high >= open.tp : candle.low <= open.tp;
@@ -262,7 +318,14 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       const result = strategy.evaluate(signal);
       if (!result.passed) continue;
 
-      const rawEntry = candle.close;
+      // ict_sweep_mss/_sl (exit.mode 'levels'/'levels_trailing'): entry fills
+      // at the adapter's own structure-derived limit price (the FVG
+      // retracement level) rather than this bar's close — the signal only
+      // ever fires on the bar price actually traded through that level (see
+      // ictSweepMssAdapter.js's fill scan), so entryPrice is a real,
+      // already-validated intrabar price, not a synthetic one.
+      const isLevelsMode = strategy.exit.mode === 'levels' || strategy.exit.mode === 'levels_trailing';
+      const rawEntry = isLevelsMode && Number.isFinite(signal.entryPrice) ? signal.entryPrice : candle.close;
       const entryFill = entryCost(upperSymbol, assetClass, rawEntry, direction);
       const { sl, tp } =
         strategy.exit.mode === 'signal'
@@ -271,9 +334,11 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
           ? initialSignalOrSltpExit(entryFill, direction, strategy.exit)
           : strategy.exit.mode === 'trailing'
           ? initialTrailingExit(entryFill, direction, strategy.exit, atrSeries[i])
+          : isLevelsMode
+          ? { sl: signal.slPrice, tp: signal.tpPrice }
           : initialFixedExit(entryFill, direction, strategy.exit);
 
-      open = { direction, entryFill, sl, tp, openIndex: i };
+      open = { direction, entryFill, sl, tp, openIndex: i, initialSl: sl };
       break;
     }
   }

@@ -21,6 +21,7 @@ import * as cryptoFlawlessVictory from './cryptoFlawlessVictory.js';
 import * as cryptoMfiEngulfing from './cryptoMfiEngulfing.js';
 import * as cryptoHolyGrailAdxSmaBb from './cryptoHolyGrailAdxSmaBb.js';
 import * as cryptoBbRsiTrendfilter from './cryptoBbRsiTrendfilter.js';
+import * as ictSweepMss from './ictSweepMss.js';
 
 // Order matches worker.js STRATEGIES registration order (crypto_baseline
 // first as the control group, then the rest in tradingview-bot integration
@@ -105,6 +106,35 @@ STRATEGY_REGISTRY.crypto_flawless_victory_v3 = {
   disableShorts: false,
   evaluate: cryptoFlawlessVictory.evaluate,
   exit: cryptoFlawlessVictory.V3_EXIT,
+};
+
+// ict_sweep_mss / ict_sweep_mss_sl — like crypto_flawless_victory_v2/v3
+// above, this doesn't fit buildRegistry()'s generic base+"_sl" fixed-%-vs-
+// ATR-trailing pairing: both variants need structure-derived absolute
+// entry/SL/TP levels straight off the adapter's signal (sweep-low-based SL,
+// next-untouched-swing-high TP — not a %/ATR multiple), via engine.js's
+// exit.mode:'levels'. The _sl variant layers breakeven-at-1R +
+// trail-under-new-confirmed-swing-point management on top of those same
+// initial levels (exit.mode:'levels_trailing') rather than swapping to a
+// generic ATR trail — see ictSweepMssAdapter.js's trailAnchorAt and
+// engine.js's exit.mode:'levels_trailing' block.
+STRATEGY_REGISTRY.ict_sweep_mss = {
+  key: 'ict_sweep_mss',
+  label: ictSweepMss.label,
+  assetClass: ictSweepMss.assetClass,
+  cooldownMinutes: null,
+  disableShorts: false,
+  evaluate: ictSweepMss.evaluate,
+  exit: { mode: 'levels' },
+};
+STRATEGY_REGISTRY.ict_sweep_mss_sl = {
+  key: 'ict_sweep_mss_sl',
+  label: `${ictSweepMss.label} (SL)`,
+  assetClass: ictSweepMss.assetClass,
+  cooldownMinutes: null,
+  disableShorts: false,
+  evaluate: ictSweepMss.evaluate,
+  exit: { mode: 'levels_trailing' },
 };
 
 export function getStrategy(strategyKey) {

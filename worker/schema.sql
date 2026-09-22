@@ -98,7 +98,17 @@ CREATE TABLE IF NOT EXISTS strategy_settings (
   risk_per_trade_pct REAL NOT NULL DEFAULT 1.0,
   session_filter TEXT NOT NULL DEFAULT '[]', -- JSON array
   correlation_limit REAL NOT NULL DEFAULT 0.7,
-  news_filter_threshold REAL NOT NULL DEFAULT 0.5
+  news_filter_threshold REAL NOT NULL DEFAULT 0.5,
+  -- Generic per-strategy logic-threshold overrides (JSON object), read by a
+  -- strategy's backtest adapter (see backtest/engine.js's runBacktest and
+  -- backtest/ictSweepMssAdapter.js's DEFAULT_PARAMS) instead of the fixed
+  -- risk/session/correlation/news knobs above, which are auto-trade
+  -- position-sizing/risk knobs, not signal-detection logic. Every existing
+  -- strategy ignores this column (defaults to '{}', i.e. "use the adapter's
+  -- own built-in constants") — introduced for ict_sweep_mss/_sl, whose rules
+  -- (swing lookback, ATR multiples, R-multiple minimum, entry mode, ...) are
+  -- all meant to be configurable without a code change.
+  params_json TEXT NOT NULL DEFAULT '{}'
 );
 
 -- One row per strategy that has an entry in backtest/adapters.js's ADAPTERS
@@ -287,33 +297,55 @@ INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_defini
     '2026-09-01 08:10:00', '2026-09-01 08:10:00'),
   ('crypto_bb_rsi_trendfilter_sl', 'Crypto BB Trendfilter RSI (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
     '{"factors":["bb200_0.2_trend_filter","rsi3_cross_80_20"],"trailing_anchor":"atr"}',
-    '2026-09-01 08:10:00', '2026-09-01 08:10:00');
+    '2026-09-01 08:10:00', '2026-09-01 08:10:00'),
 
-INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold) VALUES
-  ('crypto_baseline', 1.0, '[]', 0.7, 0.5),
-  ('crypto_baseline_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_sr_volume', 1.0, '[]', 0.7, 0.5),
-  ('crypto_sr_volume_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_orderflow_breakout', 0.25, '[]', 0.7, 0.5),
-  ('crypto_orderflow_breakout_sl', 0.25, '[]', 0.7, 0.5),
-  ('crypto_ichimoku_breakout', 1.0, '[]', 0.7, 0.5),
-  ('crypto_ichimoku_breakout_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_sr_bollinger', 1.0, '[]', 0.7, 0.5),
-  ('crypto_sr_bollinger_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_sr_exclusion', 1.0, '[]', 0.7, 0.5),
-  ('crypto_sr_exclusion_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_ict_smc', 1.0, '[]', 0.7, 0.5),
-  ('crypto_ict_smc_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_flawless_victory', 1.0, '[]', 0.7, 0.5),
-  ('crypto_flawless_victory_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_flawless_victory_v2', 1.0, '[]', 0.7, 0.5),
-  ('crypto_flawless_victory_v3', 1.0, '[]', 0.7, 0.5),
-  ('crypto_mfi_engulfing', 1.0, '[]', 0.7, 0.5),
-  ('crypto_mfi_engulfing_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_holy_grail_adx_sma_bb', 1.0, '[]', 0.7, 0.5),
-  ('crypto_holy_grail_adx_sma_bb_sl', 1.0, '[]', 0.7, 0.5),
-  ('crypto_bb_rsi_trendfilter', 1.0, '[]', 0.7, 0.5),
-  ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5);
+  -- ict_sweep_mss / ict_sweep_mss_sl — Liquidity Sweep -> Displacement ->
+  -- MSS -> FVG -> Entry -> Target (see worker/src/strategies/ictSweepMss.js
+  -- and worker/src/backtest/ictSweepMssAdapter.js). Unlike every strategy
+  -- above, usable across crypto AND forex/index (this worker's full
+  -- ASSET_WINDOW symbol set) — see backtest/window.js.
+  ('ict_sweep_mss', 'ICT Sweep -> MSS -> FVG', '["BTCUSDT","ETHUSDT","SOLUSDT","EURUSD","SPX500","NAS100"]', 1,
+    '{"factors":["liquidity_sweep","displacement","mss","fvg_present","min_rr_ok","htf_bias_ok"],"exit_mode":"levels","timeframe":"15m"}',
+    '2026-09-22 09:00:00', '2026-09-22 09:00:00'),
+  ('ict_sweep_mss_sl', 'ICT Sweep -> MSS -> FVG (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT","EURUSD","SPX500","NAS100"]', 1,
+    '{"factors":["liquidity_sweep","displacement","mss","fvg_present","min_rr_ok","htf_bias_ok"],"exit_mode":"levels_trailing","timeframe":"15m","trailing_anchor":"swing_point_breakeven_then_trail"}',
+    '2026-09-22 09:00:01', '2026-09-22 09:00:01');
+
+INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold, params_json) VALUES
+  ('crypto_baseline', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_baseline_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_sr_volume', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_sr_volume_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_orderflow_breakout', 0.25, '[]', 0.7, 0.5, '{}'),
+  ('crypto_orderflow_breakout_sl', 0.25, '[]', 0.7, 0.5, '{}'),
+  ('crypto_ichimoku_breakout', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_ichimoku_breakout_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_sr_bollinger', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_sr_bollinger_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_sr_exclusion', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_sr_exclusion_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_ict_smc', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_ict_smc_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_flawless_victory', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_flawless_victory_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_flawless_victory_v2', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_flawless_victory_v3', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_mfi_engulfing', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_mfi_engulfing_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_holy_grail_adx_sma_bb', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_holy_grail_adx_sma_bb_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_bb_rsi_trendfilter', 1.0, '[]', 0.7, 0.5, '{}'),
+  ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5, '{}'),
+  -- Defaults mirror ictSweepMssAdapter.js's DEFAULT_PARAMS exactly — this
+  -- row exists so the values are visible/editable via
+  -- PUT /api/strategy-settings/:id without needing to read the adapter
+  -- source, not because the adapter can't fall back on its own (it does,
+  -- via `{ ...DEFAULT_PARAMS, ...settings }`, whenever params_json is '{}'
+  -- or missing).
+  ('ict_sweep_mss', 1.0, '[]', 0.7, 0.5,
+    '{"swingLeft":3,"swingRight":3,"atrLen":14,"displacementAtrMult":1.5,"displacementBodyRatioMin":0.6,"displacementMaxBars":5,"mssMaxBars":10,"fvgMinAtrMult":0.2,"entryMode":"ce","slAtrBuffer":0.1,"minRR":1.5,"fillMaxBars":20,"htfBiasFilter":false,"htfTimeframeMinutes":240}'),
+  ('ict_sweep_mss_sl', 1.0, '[]', 0.7, 0.5,
+    '{"swingLeft":3,"swingRight":3,"atrLen":14,"displacementAtrMult":1.5,"displacementBodyRatioMin":0.6,"displacementMaxBars":5,"mssMaxBars":10,"fvgMinAtrMult":0.2,"entryMode":"ce","slAtrBuffer":0.1,"minRR":1.5,"fillMaxBars":20,"htfBiasFilter":false,"htfTimeframeMinutes":240}');
 
 -- No seed trades/activity_log/backtest_runs rows here on purpose — see the
 -- DELETEs above. From here on these tables only ever hold rows written by

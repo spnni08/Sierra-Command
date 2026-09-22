@@ -153,7 +153,7 @@ async function getStrategies(env) {
          s.id, s.name, s.asset_classes, s.active, s.factor_definition,
          s.created_at, s.updated_at,
          ss.risk_per_trade_pct, ss.session_filter, ss.correlation_limit,
-         ss.news_filter_threshold
+         ss.news_filter_threshold, ss.params_json
        FROM strategies s
        LEFT JOIN strategy_settings ss ON ss.strategy_id = s.id
        ORDER BY s.created_at ASC`
@@ -172,6 +172,10 @@ async function getStrategies(env) {
         session_filter: parseJsonColumn(row.session_filter, []),
         correlation_limit: row.correlation_limit ?? null,
         news_filter_threshold: row.news_filter_threshold ?? null,
+        // Per-strategy logic-threshold overrides — see schema.sql's
+        // strategy_settings.params_json comment. '{}' (or no row at all,
+        // pre-migration) means "use the adapter's own built-in defaults".
+        params: parseJsonColumn(row.params_json, {}),
       },
     }));
 
@@ -276,19 +280,20 @@ async function putStrategySettings(request, env, strategyId) {
     return Response.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const { risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold } = body || {};
+  const { risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold, params } = body || {};
 
   if (
     typeof risk_per_trade_pct !== 'number' ||
     !Array.isArray(session_filter) ||
     typeof correlation_limit !== 'number' ||
-    typeof news_filter_threshold !== 'number'
+    typeof news_filter_threshold !== 'number' ||
+    (params !== undefined && (typeof params !== 'object' || params === null || Array.isArray(params)))
   ) {
     return Response.json(
       {
         error: 'invalid_body',
         message:
-          'Expected { risk_per_trade_pct: number, session_filter: string[], correlation_limit: number, news_filter_threshold: number }',
+          'Expected { risk_per_trade_pct: number, session_filter: string[], correlation_limit: number, news_filter_threshold: number, params?: object }',
       },
       { status: 400 }
     );
@@ -302,16 +307,25 @@ async function putStrategySettings(request, env, strategyId) {
       return Response.json({ error: 'not_found', message: 'strategy does not exist' }, { status: 404 });
     }
 
+    // `params` (the strategy's own logic-threshold overrides, see
+    // schema.sql's strategy_settings.params_json comment) is optional on
+    // this route — a caller that only wants to update the risk/session/
+    // correlation/news knobs (every caller before ict_sweep_mss) shouldn't
+    // have to also resend params_json, so an omitted `params` keeps
+    // whatever the row already has instead of being reset to '{}'.
+    const paramsJson = params !== undefined ? JSON.stringify(params) : null;
+
     await env.DB.prepare(
-      `INSERT INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO strategy_settings (strategy_id, risk_per_trade_pct, session_filter, correlation_limit, news_filter_threshold, params_json)
+       VALUES (?, ?, ?, ?, ?, COALESCE(?, '{}'))
        ON CONFLICT(strategy_id) DO UPDATE SET
          risk_per_trade_pct = excluded.risk_per_trade_pct,
          session_filter = excluded.session_filter,
          correlation_limit = excluded.correlation_limit,
-         news_filter_threshold = excluded.news_filter_threshold`
+         news_filter_threshold = excluded.news_filter_threshold,
+         params_json = COALESCE(?, strategy_settings.params_json)`
     )
-      .bind(strategyId, risk_per_trade_pct, JSON.stringify(session_filter), correlation_limit, news_filter_threshold)
+      .bind(strategyId, risk_per_trade_pct, JSON.stringify(session_filter), correlation_limit, news_filter_threshold, paramsJson, paramsJson)
       .run();
 
     const updated = await env.DB.prepare('SELECT * FROM strategy_settings WHERE strategy_id = ?')
@@ -322,6 +336,7 @@ async function putStrategySettings(request, env, strategyId) {
       data: {
         ...updated,
         session_filter: parseJsonColumn(updated.session_filter, []),
+        params: parseJsonColumn(updated.params_json, {}),
       },
     });
   } catch (err) {

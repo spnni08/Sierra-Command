@@ -103,6 +103,18 @@ jobs:
             echo "trades.exit_mode already present — skipping."
           fi
 
+          echo "Probing strategy_settings.params_json..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT params_json FROM strategy_settings LIMIT 1" >/tmp/probe_settings.log 2>&1
+          SETTINGS_PROBE=$?
+          set -e
+          if [ $SETTINGS_PROBE -ne 0 ]; then
+            echo "strategy_settings.params_json missing — adding it."
+            npx wrangler d1 execute sierra-command-db --remote --command "ALTER TABLE strategy_settings ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'"
+          else
+            echo "strategy_settings.params_json already present — skipping."
+          fi
+
           echo "Probing backtest_runs.win_rate..."
           set +e
           npx wrangler d1 execute sierra-command-db --remote --command "SELECT win_rate FROM backtest_runs LIMIT 1" >/tmp/probe_backtest.log 2>&1
