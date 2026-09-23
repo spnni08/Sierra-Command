@@ -4,7 +4,8 @@
 // columns alone. Bearer-gated automatically (not in auth.js's
 // PUBLIC_PREFIXES), same as /backtest.
 import { berlinRangeUtc, isValidDateStr } from '../lib/berlinDay.js';
-import { computeStrategyStatsRow, groupStrategyStats, normalizeSymbol, normalizeTimeframe } from '../stats/computeStats.js';
+import { computeStrategyStatsRow, groupStrategyStats, normalizeSymbol, sessionGroupLabel } from '../stats/computeStats.js';
+import { sessionOf } from '../lib/sessions.js';
 
 // 'demo'/'live' are UI-facing groupings over trades.source's finer-grained
 // values (see schema.sql's CHECK constraint) — 'source' is a filter that
@@ -145,6 +146,7 @@ const TRADE_SORT_ACCESSORS = {
   pnl: (t) => t.pnl,
   symbol: (t) => t.symbol,
   timeframe: (t) => t.timeframe,
+  session: (t) => sessionGroupLabel(t),
 };
 
 function sortTrades(trades, sortKey, dir) {
@@ -160,16 +162,16 @@ function sortTrades(trades, sortKey, dir) {
   });
 }
 
-// Picks the single best (symbol, timeframe) combination among the
-// byAssetTimeframe groups that meet the minimum-trades threshold — ranked
+// Picks the single best (symbol, session) combination among the
+// byAssetSession groups that meet the minimum-trades threshold — ranked
 // by expectancyR when at least one qualifying combo has one, falling back
 // to expectancyUsd only when none do (never mixing the two within one
 // ranking). null (plus the caller showing an explicit "no combination
 // reached the threshold" message) when nothing qualifies at all.
 const BEST_COMBO_MIN_TRADES = 10;
 
-function pickBestCombo(byAssetTimeframe) {
-  const qualifying = byAssetTimeframe.filter((c) => c.tradeCount >= BEST_COMBO_MIN_TRADES);
+function pickBestCombo(byAssetSession) {
+  const qualifying = byAssetSession.filter((c) => c.tradeCount >= BEST_COMBO_MIN_TRADES);
   if (qualifying.length === 0) return null;
 
   const withR = qualifying.filter((c) => c.expectancyR != null);
@@ -178,7 +180,7 @@ function pickBestCombo(byAssetTimeframe) {
   if (pool.length === 0) return null;
 
   const best = pool.reduce((a, b) => (b[metric] > a[metric] ? b : a));
-  return { symbol: best.symbol, timeframe: best.timeframe, metric, value: best[metric], tradeCount: best.tradeCount };
+  return { symbol: best.symbol, session: best.session, metric, value: best[metric], tradeCount: best.tradeCount };
 }
 
 async function strategyDetailRoute(url, env, strategyId) {
@@ -221,21 +223,22 @@ async function strategyDetailRoute(url, env, strategyId) {
       symbol: key,
       ...stats,
     }));
-    const byTimeframe = groupStrategyStats(trades, (t) => normalizeTimeframe(t.timeframe)).map(({ key, ...stats }) => ({
-      timeframe: key,
+    const bySession = groupStrategyStats(trades, sessionGroupLabel).map(({ key, ...stats }) => ({
+      session: key,
       ...stats,
     }));
-    const byAssetTimeframe = groupStrategyStats(
+    const byAssetSession = groupStrategyStats(
       trades,
-      (t) => `${normalizeSymbol(t.symbol)}::${normalizeTimeframe(t.timeframe)}`
+      (t) => `${normalizeSymbol(t.symbol)}::${sessionGroupLabel(t)}`
     ).map(({ key, ...stats }) => {
-      const [symbol, timeframe] = key.split('::');
-      return { symbol, timeframe, ...stats };
+      const [symbol, session] = key.split('::');
+      return { symbol, session, ...stats };
     });
-    const bestCombo = pickBestCombo(byAssetTimeframe);
+    const bestCombo = pickBestCombo(byAssetSession);
 
     const tradeSymbol = url.searchParams.get('tradeSymbol') || null;
-    const tradeTimeframe = url.searchParams.get('tradeTimeframe') || null;
+    const tradeSession = url.searchParams.get('tradeSession') || null;
+    const tradeWeekend = url.searchParams.get('tradeWeekend') === 'true';
     const tradesLimit = Math.min(Math.max(parseInt(url.searchParams.get('tradesLimit'), 10) || 50, 1), 500);
     const tradesOffset = Math.max(parseInt(url.searchParams.get('tradesOffset'), 10) || 0, 0);
     const tradesSort = url.searchParams.get('tradesSort') || 'closedAt';
@@ -243,13 +246,16 @@ async function strategyDetailRoute(url, env, strategyId) {
 
     let filteredTrades = trades;
     if (tradeSymbol) filteredTrades = filteredTrades.filter((t) => normalizeSymbol(t.symbol) === tradeSymbol);
-    if (tradeTimeframe) filteredTrades = filteredTrades.filter((t) => normalizeTimeframe(t.timeframe) === tradeTimeframe);
+    if (tradeSession) filteredTrades = filteredTrades.filter((t) => sessionGroupLabel(t) === tradeSession);
+    if (tradeWeekend) filteredTrades = filteredTrades.filter((t) => sessionOf(t.openedAt).isWeekend);
     const sortedTrades = sortTrades(filteredTrades, tradesSort, tradesDir);
     const total = sortedTrades.length;
     const rows = sortedTrades.slice(tradesOffset, tradesOffset + tradesLimit).map((t) => ({
       id: t.id,
       symbol: t.symbol,
       timeframe: t.timeframe,
+      session: sessionGroupLabel(t),
+      isWeekend: sessionOf(t.openedAt).isWeekend,
       direction: t.direction,
       entry: t.entry,
       sl: t.sl,
@@ -268,10 +274,16 @@ async function strategyDetailRoute(url, env, strategyId) {
         name: strategy.name,
         active: !!strategy.active,
         openCount,
+        // Same rule as strategiesRoute's per-row field (see CRYPTO_SYMBOLS
+        // above) — computed here too since the modal no longer has a
+        // byAssetTimeframe to derive it from client-side, and this must
+        // reflect the full (unfiltered-by-tradeSymbol/tradeSession) trade
+        // set, same as `trades` above.
+        hasSyntheticDailyCandles: source === 'backtest' && trades.some((t) => t.timeframe === '1d' && CRYPTO_SYMBOLS.has(t.symbol)),
         overall,
         byAsset,
-        byTimeframe,
-        byAssetTimeframe,
+        bySession,
+        byAssetSession,
         bestCombo,
         trades: { rows, total, limit: tradesLimit, offset: tradesOffset },
       },

@@ -168,6 +168,39 @@ jobs:
           else
             echo "activity_log.user_agent already present — skipping."
           fi
+
+          echo "Probing backtest_session_breakdown.session CHECK constraint..."
+          # SQLite can't ALTER a CHECK constraint in place, so a plain
+          # column-presence probe (as used above) doesn't apply here — the
+          # column itself hasn't changed, only the set of values its CHECK
+          # accepts. Instead, text-search the table's own stored CREATE
+          # TABLE statement (sqlite_master.sql) for the new session value —
+          # present means already migrated, absent means still on the old
+          # 4-value CHECK. This table is a pure derived aggregate cache (see
+          # schema.sql's comment) with nothing referencing it via FK, so a
+          # plain drop+recreate is enough — no backup/restore dance like the
+          # trades.exit_mode rebuild above. Existing rows are in the old,
+          # now-incompatible 4-bucket shape and are intentionally not
+          # migrated; they repopulate the next time each strategy is
+          # backtested.
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT sql FROM sqlite_master WHERE type='table' AND name='backtest_session_breakdown'" > /tmp/probe_session_breakdown.log 2>&1
+          if ! grep -q "london_ny_overlap" /tmp/probe_session_breakdown.log; then
+            echo "backtest_session_breakdown still on the old session CHECK — dropping and recreating."
+            npx wrangler d1 execute sierra-command-db --remote --command "
+              DROP TABLE IF EXISTS backtest_session_breakdown;
+              CREATE TABLE backtest_session_breakdown (
+                backtest_run_id TEXT NOT NULL REFERENCES backtest_runs(id),
+                session TEXT NOT NULL CHECK (session IN ('asia','london','new_york','london_ny_overlap','asia_london_overlap','outside')),
+                trade_count INTEGER NOT NULL DEFAULT 0,
+                win_rate REAL,
+                net_pnl REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (backtest_run_id, session)
+              );
+              CREATE INDEX IF NOT EXISTS idx_backtest_session_breakdown_run_id ON backtest_session_breakdown(backtest_run_id);
+            "
+          else
+            echo "backtest_session_breakdown already on the new session CHECK — skipping."
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # ict_sweep_mss/_sl's default logic-threshold overrides — deliberately

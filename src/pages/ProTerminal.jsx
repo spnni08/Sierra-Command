@@ -125,15 +125,18 @@ function fmtSignedNum(v) {
 }
 
 // Display order for the session-breakdown table — matches
-// worker/src/backtest/sessions.js's SESSION_WINDOWS keys. Overlap is shown
-// last and labeled as such since it's an informational subset of
-// London+New York, not a fourth additive bucket: total trades ===
-// asia + london + new_york - overlap (see that file's header for why).
+// worker/src/lib/sessions.js's SESSION_KEYS (real local-market-time
+// windows, DST-aware). Every trade lands in exactly one of these 6
+// buckets, so they simply sum to the run's total trade count — no overlap
+// subtraction needed (unlike the older fixed-UTC-hour version of this
+// breakdown).
 const SESSION_BREAKDOWN_ROWS = [
   { key: 'asia', label: 'Asia' },
   { key: 'london', label: 'London' },
   { key: 'new_york', label: 'New York' },
-  { key: 'overlap', label: 'Overlap (London/NY)' },
+  { key: 'london_ny_overlap', label: 'London/NY Overlap' },
+  { key: 'asia_london_overlap', label: 'Asia/London Overlap' },
+  { key: 'outside', label: 'Außerhalb' },
 ];
 
 const TF = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
@@ -531,8 +534,8 @@ export default function ProTerminal() {
                 list rows don't join it), so that case (and any
                 non-backtestable selection) falls back to the same "—" /
                 "noch nicht verfügbar" placeholder pattern used above for
-                out-of-sample deviation etc. Overlap is NOT additive with the
-                other three — see worker/src/backtest/sessions.js. */}
+                out-of-sample deviation etc. Each trade lands in exactly one
+                of the 6 buckets — see worker/src/lib/sessions.js. */}
             <div style={{ padding: '6px 9px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Session-Auswertung</div>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, borderBottom: '1px solid var(--line)' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 56px 64px 72px', padding: '4px 9px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)' }}>

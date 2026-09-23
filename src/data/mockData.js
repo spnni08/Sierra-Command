@@ -75,7 +75,10 @@ export function fmtPct(v) {
   return (v / 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + 'x';
 }
 
-export const SESSIONS = ['Alle Sessions', 'Nur EU+US', 'Ohne Asien'];
+// Same session keys/definition as worker/src/lib/sessions.js's sessionOf()
+// (Asia/London/New York + their overlaps) — see AutoTrade.jsx's
+// SESSION_FILTER_PRESETS for exactly which keys each label stores.
+export const SESSIONS = ['Alle Sessions', 'London + New York', 'Nur London/NY Overlap'];
 export const NEWSLV = ['Niedrig', 'Mittel', 'Hoch'];
 
 export const TICKER = [

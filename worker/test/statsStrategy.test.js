@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeSymbol, normalizeTimeframe, groupStrategyStats } from '../src/stats/computeStats.js';
+import { normalizeSymbol, normalizeTimeframe, groupStrategyStats, sessionGroupLabel } from '../src/stats/computeStats.js';
 import { handleStatsRoute } from '../src/routes/stats.js';
 
 describe('normalizeSymbol', () => {
@@ -56,6 +56,21 @@ describe('normalizeTimeframe', () => {
     expect(normalizeTimeframe(null)).toBe('unbekannt');
     expect(normalizeTimeframe(undefined)).toBe('unbekannt');
     expect(normalizeTimeframe('')).toBe('unbekannt');
+  });
+});
+
+describe('sessionGroupLabel', () => {
+  it('returns "–" for a 1d-timeframe trade instead of a real session, regardless of opened_at', () => {
+    // Even an opened_at that would otherwise land squarely in a real
+    // session window must not be classified — a daily candle has no
+    // genuine intraday entry time.
+    expect(sessionGroupLabel({ timeframe: '1d', openedAt: '2026-06-02 13:00:00' })).toBe('–');
+    expect(sessionGroupLabel({ timeframe: 'D', openedAt: '2026-06-02 13:00:00' })).toBe('–'); // raw TradingView code also normalizes to 1d
+  });
+
+  it('returns a real session label for any other timeframe, including missing/unknown', () => {
+    expect(sessionGroupLabel({ timeframe: '4h', openedAt: '2026-06-02 13:00:00' })).toBe('London/NY Overlap');
+    expect(sessionGroupLabel({ timeframe: null, openedAt: '2026-06-02 00:00:00' })).toBe('Asia');
   });
 });
 
@@ -124,11 +139,13 @@ describe('GET /stats/strategy/:id', () => {
     expect(res.status).toBe(400);
   });
 
-  it('groups backtest trades by asset, timeframe, and the asset x timeframe combination', async () => {
+  it('groups backtest trades by asset, session, and the asset x session combination', async () => {
     const tradeRows = [
-      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, reason: 'tp', opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 01:00:00' },
-      { id: 't2', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 90, pnl: -10, reason: 'sl', opened_at: '2026-01-02 00:00:00', closed_at: '2026-01-02 01:00:00' },
-      { id: 't3', strategy_id: 'strat-a', symbol: 'ETHUSDT', timeframe: '1h', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, reason: 'tp', opened_at: '2026-01-03 00:00:00', closed_at: '2026-01-03 01:00:00' },
+      // 13:00 UTC on a June day -> London/NY Overlap (verified in sessions.test.js).
+      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, reason: 'tp', opened_at: '2026-06-02 13:00:00', closed_at: '2026-06-02 14:00:00' },
+      { id: 't2', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 90, pnl: -10, reason: 'sl', opened_at: '2026-06-02 13:30:00', closed_at: '2026-06-02 14:30:00' },
+      // 00:00 UTC -> Asia.
+      { id: 't3', strategy_id: 'strat-a', symbol: 'ETHUSDT', timeframe: '1h', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, reason: 'tp', opened_at: '2026-06-02 00:00:00', closed_at: '2026-06-02 01:00:00' },
     ];
     const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
     const res = await callDetail(env, 'strat-a', 'source=backtest&range=all');
@@ -138,41 +155,57 @@ describe('GET /stats/strategy/:id', () => {
     expect(data.overall.tradeCount).toBe(3);
     expect(data.byAsset.map((r) => r.symbol).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
     expect(data.byAsset.find((r) => r.symbol === 'BTCUSDT').tradeCount).toBe(2);
-    expect(data.byTimeframe.map((r) => r.timeframe).sort()).toEqual(['15m', '1h']);
-    expect(data.byAssetTimeframe).toHaveLength(2);
-    const btc15m = data.byAssetTimeframe.find((r) => r.symbol === 'BTCUSDT' && r.timeframe === '15m');
-    expect(btc15m.tradeCount).toBe(2);
+    expect(data.bySession.map((r) => r.session).sort()).toEqual(['Asia', 'London/NY Overlap']);
+    expect(data.byAssetSession).toHaveLength(2);
+    const btcOverlap = data.byAssetSession.find((r) => r.symbol === 'BTCUSDT' && r.session === 'London/NY Overlap');
+    expect(btcOverlap.tradeCount).toBe(2);
   });
 
-  it('normalizes symbol/timeframe spellings when grouping (does not fragment the matrix)', async () => {
+  it('normalizes symbol spellings when grouping (does not fragment byAsset)', async () => {
     const tradeRows = [
-      { id: 't1', strategy_id: 'strat-a', symbol: 'EUR_USD', timeframe: '240', direction: 'long', entry: 1, sl: 0.99, tp: 1.02, exit_price: 1.01, pnl: 10, opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 01:00:00' },
-      { id: 't2', strategy_id: 'strat-a', symbol: 'EUR/USD', timeframe: '4h', direction: 'long', entry: 1, sl: 0.99, tp: 1.02, exit_price: 1.01, pnl: 5, opened_at: '2026-01-02 00:00:00', closed_at: '2026-01-02 01:00:00' },
+      { id: 't1', strategy_id: 'strat-a', symbol: 'EUR_USD', timeframe: '4h', direction: 'long', entry: 1, sl: 0.99, tp: 1.02, exit_price: 1.01, pnl: 10, opened_at: '2026-06-02 13:00:00', closed_at: '2026-01-01 01:00:00' },
+      { id: 't2', strategy_id: 'strat-a', symbol: 'EUR/USD', timeframe: '4h', direction: 'long', entry: 1, sl: 0.99, tp: 1.02, exit_price: 1.01, pnl: 5, opened_at: '2026-06-02 13:15:00', closed_at: '2026-01-02 01:00:00' },
     ];
     const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
     const res = await callDetail(env, 'strat-a', 'source=backtest');
     const { data } = await res.json();
 
-    // Both rows are the same asset (EURUSD) and same timeframe (4h) once
-    // normalized, despite arriving with different raw spellings.
+    // Both rows are the same asset (EURUSD) once normalized, despite
+    // arriving with different raw spellings — and land in the same session
+    // (both opened_at within the same London/NY Overlap window).
     expect(data.byAsset).toHaveLength(1);
     expect(data.byAsset[0].symbol).toBe('EURUSD');
-    expect(data.byTimeframe).toHaveLength(1);
-    expect(data.byTimeframe[0].timeframe).toBe('4h');
-    expect(data.byTimeframe[0].tradeCount).toBe(2);
+    expect(data.bySession).toHaveLength(1);
+    expect(data.bySession[0].session).toBe('London/NY Overlap');
+    expect(data.bySession[0].tradeCount).toBe(2);
+  });
+
+  it('groups a 1d-timeframe backtest trade under "–", never a real session', async () => {
+    const tradeRows = [
+      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '1d', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, reason: 'tp', opened_at: '2026-06-02 13:00:00', closed_at: '2026-06-03 00:00:00' },
+    ];
+    const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
+    const res = await callDetail(env, 'strat-a', 'source=backtest&tradesLimit=10');
+    const { data } = await res.json();
+
+    expect(data.bySession).toHaveLength(1);
+    expect(data.bySession[0].session).toBe('–');
+    expect(data.byAssetSession[0].session).toBe('–');
+    expect(data.trades.rows[0].session).toBe('–');
   });
 
   it('bestCombo requires at least 10 trades and ranks by expectancyR', async () => {
-    // 9 trades on BTCUSDT/15m (below threshold) vs 10 trades on ETHUSDT/1h (qualifies).
+    // 9 trades on BTCUSDT (London/NY Overlap, below threshold) vs 10 trades
+    // on ETHUSDT (Asia, qualifies).
     const belowThreshold = Array.from({ length: 9 }, (_, i) => ({
       id: `b${i}`, strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long',
       entry: 100, sl: 90, tp: 120, exit_price: 120, pnl: 20,
-      opened_at: `2026-01-${String(i + 1).padStart(2, '0')} 00:00:00`, closed_at: `2026-01-${String(i + 1).padStart(2, '0')} 01:00:00`,
+      opened_at: `2026-06-${String(i + 1).padStart(2, '0')} 13:00:00`, closed_at: `2026-06-${String(i + 1).padStart(2, '0')} 14:00:00`,
     }));
     const atThreshold = Array.from({ length: 10 }, (_, i) => ({
       id: `e${i}`, strategy_id: 'strat-a', symbol: 'ETHUSDT', timeframe: '1h', direction: 'long',
       entry: 100, sl: 90, tp: 120, exit_price: 105, pnl: 5,
-      opened_at: `2026-02-${String(i + 1).padStart(2, '0')} 00:00:00`, closed_at: `2026-02-${String(i + 1).padStart(2, '0')} 01:00:00`,
+      opened_at: `2026-07-${String(i + 1).padStart(2, '0')} 00:00:00`, closed_at: `2026-07-${String(i + 1).padStart(2, '0')} 01:00:00`,
     }));
     const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows: [...belowThreshold, ...atThreshold] }) };
     const res = await callDetail(env, 'strat-a', 'source=backtest');
@@ -180,13 +213,13 @@ describe('GET /stats/strategy/:id', () => {
 
     expect(data.bestCombo).not.toBeNull();
     expect(data.bestCombo.symbol).toBe('ETHUSDT');
-    expect(data.bestCombo.timeframe).toBe('1h');
+    expect(data.bestCombo.session).toBe('Asia');
     expect(data.bestCombo.tradeCount).toBe(10);
   });
 
   it('bestCombo is null when no combination reaches the 10-trade threshold', async () => {
     const tradeRows = [
-      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 01:00:00' },
+      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-06-02 13:00:00', closed_at: '2026-01-01 01:00:00' },
     ];
     const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
     const res = await callDetail(env, 'strat-a', 'source=backtest');
@@ -194,34 +227,62 @@ describe('GET /stats/strategy/:id', () => {
     expect(data.bestCombo).toBeNull();
   });
 
-  it('paginates and filters the trades sub-list by normalized asset/timeframe without touching the groupings', async () => {
+  it('paginates and filters the trades sub-list by normalized asset/session without touching the groupings', async () => {
     const tradeRows = [
-      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-03 00:00:00' },
-      { id: 't2', strategy_id: 'strat-a', symbol: 'ETHUSDT', timeframe: '1h', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-01-02 00:00:00', closed_at: '2026-01-02 00:00:00' },
-      { id: 't3', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 90, pnl: -10, opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 00:00:00' },
+      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-06-02 13:00:00', closed_at: '2026-01-03 00:00:00' },
+      { id: 't2', strategy_id: 'strat-a', symbol: 'ETHUSDT', timeframe: '1h', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-06-02 00:00:00', closed_at: '2026-01-02 00:00:00' },
+      { id: 't3', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 90, pnl: -10, opened_at: '2026-06-02 13:15:00', closed_at: '2026-01-01 00:00:00' },
     ];
     const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
-    const res = await callDetail(env, 'strat-a', 'source=backtest&tradeSymbol=BTCUSDT&tradeTimeframe=15m&tradesLimit=1&tradesOffset=0&tradesSort=closedAt&tradesDir=asc');
+    const query = `source=backtest&tradeSymbol=BTCUSDT&tradeSession=${encodeURIComponent('London/NY Overlap')}&tradesLimit=1&tradesOffset=0&tradesSort=closedAt&tradesDir=asc`;
+    const res = await callDetail(env, 'strat-a', query);
     const { data } = await res.json();
 
     // Groupings still reflect ALL 3 trades, not just the filtered slice.
     expect(data.overall.tradeCount).toBe(3);
-    // But the trades sub-list is filtered to BTCUSDT/15m (2 of 3) and paginated to 1.
+    // But the trades sub-list is filtered to BTCUSDT/London-NY-Overlap (2 of 3) and paginated to 1.
     expect(data.trades.total).toBe(2);
     expect(data.trades.rows).toHaveLength(1);
     expect(data.trades.rows[0].id).toBe('t3'); // earlier closedAt, ascending sort
     expect(data.trades.rows[0].realizedR).toBeCloseTo(-1, 10); // diff=-10, |entry-sl|=10
   });
 
-  it('reason stays null (never guessed) for live/demo trades, unlike backtest trades', async () => {
+  it('filters the trades sub-list by tradeWeekend', async () => {
     const tradeRows = [
-      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: null, direction: 'long', entry: 100, sl: 90, tp: 120, pnl: 10, volume: 1, opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 01:00:00' },
+      // 2026-03-28 is a Saturday.
+      { id: 'weekend', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-03-28 12:00:00', closed_at: '2026-03-28 13:00:00' },
+      // 2026-06-02 is a Tuesday.
+      { id: 'weekday', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-06-02 12:00:00', closed_at: '2026-06-02 13:00:00' },
+    ];
+    const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
+    const res = await callDetail(env, 'strat-a', 'source=backtest&tradeWeekend=true&tradesLimit=10');
+    const { data } = await res.json();
+
+    expect(data.trades.total).toBe(1);
+    expect(data.trades.rows[0].id).toBe('weekend');
+    expect(data.trades.rows[0].isWeekend).toBe(true);
+  });
+
+  it('every trade row also carries isWeekend even without the filter applied', async () => {
+    const tradeRows = [
+      { id: 'weekday', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: '15m', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 10, opened_at: '2026-06-02 12:00:00', closed_at: '2026-06-02 13:00:00' },
+    ];
+    const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows }) };
+    const res = await callDetail(env, 'strat-a', 'source=backtest&tradesLimit=10');
+    const { data } = await res.json();
+    expect(data.trades.rows[0].isWeekend).toBe(false);
+  });
+
+  it('reason stays null (never guessed) for live/demo trades, and a missing (non-1d) timeframe still gets a real session', async () => {
+    const tradeRows = [
+      { id: 't1', strategy_id: 'strat-a', symbol: 'BTCUSDT', timeframe: null, direction: 'long', entry: 100, sl: 90, tp: 120, pnl: 10, volume: 1, opened_at: '2026-06-02 00:00:00', closed_at: '2026-06-02 01:00:00' },
     ];
     const env = { DB: createFakeDb({ strategy: STRATEGY, tradeRows, openRows: [] }) };
     const res = await callDetail(env, 'strat-a', 'source=live&tradesLimit=10');
     const { data } = await res.json();
     expect(data.trades.rows[0].reason).toBeNull();
-    // Missing timeframe groups under 'unbekannt', not dropped.
-    expect(data.byTimeframe.find((r) => r.timeframe === 'unbekannt')).toBeTruthy();
+    // Missing timeframe is 'unbekannt', not '1d' -> sessionOf() still runs.
+    expect(data.bySession.find((r) => r.session === 'Asia')).toBeTruthy();
+    expect(data.trades.rows[0].session).toBe('Asia');
   });
 });
