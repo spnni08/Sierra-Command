@@ -7,6 +7,7 @@ import { handlePublicRoute } from './routes/public.js';
 import { handleSimulationRoute } from './routes/simulation.js';
 import { handleWebhookRoute } from './routes/webhook.js';
 import { handleBacktestRoute } from './routes/backtest.js';
+import { handleStatsRoute } from './routes/stats.js';
 import { handleWavescoutPriceRoute } from './routes/wavescout-price.js';
 import { withCors, handlePreflight } from './cors.js';
 import { checkOpenTrades } from './cron/checkOpenTrades.js';
@@ -73,6 +74,8 @@ export default {
         response = await handleWebhookRoute(request, url, env);
       } else if (url.pathname.startsWith('/backtest')) {
         response = await handleBacktestRoute(request, url, env);
+      } else if (url.pathname.startsWith('/stats')) {
+        response = await handleStatsRoute(request, url, env);
       } else if (url.pathname.startsWith('/wavescout')) {
         response = await handleWavescoutPriceRoute(request, url, env);
       } else {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isValidDateStr,
   berlinDayRangeUtc,
+  berlinRangeUtc,
   berlinMonthRangeUtc,
   berlinDateParts,
   berlinDayOfMonth,
@@ -53,6 +54,26 @@ describe('berlinDayRangeUtc', () => {
     // Jan 1st 00:00 Berlin (CET, +1h) = Dec 31 23:00 UTC.
     const { endUtc } = berlinDayRangeUtc('2026-12-31');
     expect(endUtc).toBe('2026-12-31 23:00:00');
+  });
+});
+
+describe('berlinRangeUtc', () => {
+  it('spans a multi-day CEST range using the same boundaries as berlinDayRangeUtc', () => {
+    expect(berlinRangeUtc('2026-09-01', '2026-09-22')).toEqual({
+      startUtc: '2026-08-31 22:00:00',
+      endUtc: '2026-09-22 22:00:00',
+    });
+  });
+
+  it('spans a multi-day CET range', () => {
+    expect(berlinRangeUtc('2026-01-10', '2026-01-15')).toEqual({
+      startUtc: '2026-01-09 23:00:00',
+      endUtc: '2026-01-15 23:00:00',
+    });
+  });
+
+  it('degenerates to a single-day range when from equals to', () => {
+    expect(berlinRangeUtc('2026-09-22', '2026-09-22')).toEqual(berlinDayRangeUtc('2026-09-22'));
   });
 });
 

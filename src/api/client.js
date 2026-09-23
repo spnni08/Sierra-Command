@@ -157,6 +157,19 @@ export async function runBacktest(strategyId, symbol, start, end) {
   return body;
 }
 
+// { source: 'backtest'|'demo'|'live' (required), range: '7d'|'30d'|'90d'|'all'|'custom',
+// from, to (only for range='custom', 'YYYY-MM-DD'), symbol }. See
+// worker/src/routes/stats.js for the exact query-param contract.
+export function fetchStrategyStats({ source, range, from, to, symbol }) {
+  const params = new URLSearchParams();
+  params.set('source', source);
+  if (range) params.set('range', range);
+  if (range === 'custom' && from) params.set('from', from);
+  if (range === 'custom' && to) params.set('to', to);
+  if (symbol) params.set('symbol', symbol);
+  return getJson(`/stats/strategies?${params.toString()}`);
+}
+
 export function fetchPnlCalendar(year, month) {
   const params = new URLSearchParams();
   if (year) params.set('year', year);

@@ -79,6 +79,20 @@ export function berlinDayRangeUtc(dateStr) {
   return { startUtc: toSqlString(startMs), endUtc: toSqlString(endMs) };
 }
 
+// The [startUtc, endUtc) instant range covering an arbitrary inclusive
+// Europe/Berlin calendar-date range (both 'YYYY-MM-DD', startDateStr <=
+// endDateStr) — e.g. for /stats/strategies' custom date-range filter.
+export function berlinRangeUtc(startDateStr, endDateStr) {
+  const [ys, ms, ds] = startDateStr.split('-').map(Number);
+  const [ye, me, de] = endDateStr.split('-').map(Number);
+  const startMs = findUtcForBerlinLocal(ys, ms, ds, 0, 0, 0);
+  // End boundary is exclusive — the day AFTER endDateStr, same "let Date.UTC
+  // roll into the next month" trick berlinDayRangeUtc uses.
+  const next = new Date(Date.UTC(ye, me - 1, de + 1));
+  const endMs = findUtcForBerlinLocal(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, 0);
+  return { startUtc: toSqlString(startMs), endUtc: toSqlString(endMs) };
+}
+
 // Same idea for a whole Europe/Berlin calendar month (month is 1-12).
 export function berlinMonthRangeUtc(year, month) {
   const next = new Date(Date.UTC(year, month, 1)); // month (already the "next" 0-indexed month vs. our 1-indexed input)
