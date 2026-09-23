@@ -42,6 +42,7 @@ describe('generateInvalidationSql', () => {
     expect(sql).toContain("WHERE strategy_id = 'crypto_baseline'");
     expect((sql.match(/UPDATE strategy_logic_versions/g) || []).length).toBe(1);
     expect((sql.match(/DELETE FROM backtest_session_breakdown/g) || []).length).toBe(1);
+    expect((sql.match(/DELETE FROM backtest_trades/g) || []).length).toBe(1);
     expect((sql.match(/DELETE FROM backtest_runs/g) || []).length).toBe(1);
     expect((sql.match(/INSERT INTO strategy_logic_versions/g) || []).length).toBe(1);
     // no_indicator_adapter strategies (e.g. crypto_mfi_engulfing) are never
