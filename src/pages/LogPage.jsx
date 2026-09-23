@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { fetchTrades, fetchActivityLog, fetchPnlCalendar } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import { useLiveTradePnl } from '../api/useLiveTradePnl';
 import { pnlDisplay } from '../lib/pnlFormat';
+import { todayBerlinDateStr, isValidDateStr } from '../lib/berlinDay';
 import StatusPanel from '../api/StatusPanel';
 import ErrorBoundary from '../components/ErrorBoundary';
 
@@ -45,6 +46,16 @@ function fmtSigned(v) {
 function fmtNum(v, dec = 2) {
   if (v === null || v === undefined) return '—';
   return Number(v).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+// 'YYYY-MM-DD' -> 'DD.MM.YYYY', for the day-filter empty-state messages.
+function fmtDeDate(dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  return `${d}.${m}.${y}`;
 }
 
 function fmtDuration(openedAt, closedAt) {
@@ -106,10 +117,36 @@ export default function LogPage() {
   const { dense } = useApp();
   const [logStatus, setLogStatus] = useState('all');
   const [logSrc, setLogSrc] = useState('all');
-  const [selectedDay, setSelectedDay] = useState(9);
 
-  const loadTrades = useCallback(() => fetchTrades('open'), []);
-  const loadActivity = useCallback(() => fetchActivityLog(), []);
+  // The active day filter ('YYYY-MM-DD', Europe/Berlin), synced to the
+  // ?date= URL param via history.pushState/popstate (this app has no
+  // router — see App.jsx's matching initial-page read). null = unfiltered.
+  const [dateFilter, setDateFilterState] = useState(() => {
+    const d = new URLSearchParams(window.location.search).get('date');
+    return isValidDateStr(d) ? d : null;
+  });
+  const applyDateFilter = useCallback((dateStr) => {
+    setDateFilterState(dateStr);
+    const url = dateStr ? `?date=${dateStr}` : window.location.pathname;
+    window.history.pushState({ date: dateStr ?? null }, '', url);
+  }, []);
+  useEffect(() => {
+    const onPopState = () => {
+      const d = new URLSearchParams(window.location.search).get('date');
+      setDateFilterState(isValidDateStr(d) ? d : null);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const loadTrades = useCallback(
+    () => fetchTrades(logStatus === 'all' ? undefined : logStatus, dateFilter || undefined),
+    [logStatus, dateFilter]
+  );
+  const loadActivity = useCallback(
+    () => fetchActivityLog(undefined, dateFilter || undefined),
+    [dateFilter]
+  );
   const loadPnlCalendar = useCallback(() => fetchPnlCalendar(), []);
   // All three polled — trades/activity so new events show up without a
   // reload, calendar so a trade closing updates the day's total live.
@@ -117,15 +154,21 @@ export default function LogPage() {
   const activityQ = useFetch(loadActivity, [loadActivity], { pollMs: 20_000 });
   const calendarQ = useFetch(loadPnlCalendar, [loadPnlCalendar], { pollMs: 30_000 });
 
+  // The backend already returns exactly the status/date-matching rows (see
+  // worker/src/routes/api.js's getTrades) — logStatus is no longer
+  // re-applied client-side here. Doing so used to unconditionally empty
+  // this table whenever "GESCHLOSSEN" was selected, since closed trades
+  // were never even fetched (fixed above) — keeping a redundant client-side
+  // status filter around would silently reintroduce that same bug class on
+  // any future change to loadTrades.
   const openTrades = useMemo(() => {
     const rows = (Array.isArray(tradesQ.data) ? tradesQ.data : []).map(toRowTrade);
     return rows.filter(t => {
-      if (logStatus === 'closed') return false;
       if (logSrc === 'mt5' && t.source !== 'mt5') return false;
       if (logSrc === 'exchange' && t.source !== 'exchange') return false;
       return true;
     });
-  }, [tradesQ.data, logStatus, logSrc]);
+  }, [tradesQ.data, logSrc]);
 
   const activityLog = useMemo(() => {
     const rows = (Array.isArray(activityQ.data) ? activityQ.data : []).map(toRowActivity);
@@ -142,13 +185,27 @@ export default function LogPage() {
     if (!calendarQ.data) return [];
     return buildCalendarCells(calendarQ.data.year, calendarQ.data.month, calendarQ.data.days);
   }, [calendarQ.data]);
-  const selDay = calRaw.find(c => c && c.day === selectedDay && c.hasData);
+  // The calendar grid always shows the current month (no month-navigation
+  // UI) — a dateFilter from a different month still correctly filters
+  // trades/activity (server-side, independent of this grid), it just isn't
+  // highlighted here since the grid can't show a month it isn't displaying.
+  const highlightedDay = useMemo(() => {
+    if (!dateFilter || !calendarQ.data) return null;
+    const [y, m, d] = dateFilter.split('-').map(Number);
+    return y === calendarQ.data.year && m === calendarQ.data.month ? d : null;
+  }, [dateFilter, calendarQ.data]);
+  const selDay = calRaw.find(c => c && c.day === highlightedDay && c.hasData);
   const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
   const calendarTitle = calendarQ.data
     ? `${MONTH_NAMES[calendarQ.data.month - 1]} ${calendarQ.data.year}`
     : '—';
   const logCount = openTrades.length + activityLog.length;
   const livePnl = useLiveTradePnl(openTrades);
+  const tradesPanelLabel = dateFilter
+    ? `Trades · ${fmtDeDate(dateFilter)}`
+    : logStatus === 'open' ? 'Offene Trades · vollständig'
+    : logStatus === 'closed' ? 'Geschlossene Trades · vollständig'
+    : 'Alle Trades · vollständig';
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -166,6 +223,23 @@ export default function LogPage() {
           <button onClick={() => setLogSrc('mt5')} style={segBtn(logSrc === 'mt5')}>MT5</button>
           <button onClick={() => setLogSrc('exchange')} style={segBtn(logSrc === 'exchange')}>KRAKEN/BINANCE</button>
         </div>
+        <div style={{ width: 1, height: 16, background: 'var(--line)' }} />
+        <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>Tag</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
+          <input
+            type="date"
+            value={dateFilter ?? ''}
+            max={todayBerlinDateStr()}
+            onChange={(e) => applyDateFilter(e.target.value || null)}
+            style={{
+              fontFamily: 'inherit', fontSize: 10, padding: '3px 6px',
+              background: 'var(--panel3)', border: `1px solid ${dateFilter ? 'var(--acc)' : 'var(--line2)'}`, color: 'var(--txt)',
+            }}
+          />
+          {dateFilter && (
+            <button onClick={() => applyDateFilter(null)} style={segBtn(false, true)}>FILTER ENTFERNEN</button>
+          )}
+        </div>
         <div style={{ flex: 1 }} />
         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt3)' }}>{logCount} Einträge</div>
       </div>
@@ -174,9 +248,14 @@ export default function LogPage() {
         <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', gap: 1, background: 'var(--line)', minHeight: 0 }}>
           <ErrorBoundary>
           <div style={{ background: 'var(--panel)' }}>
-            <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Offene Trades · vollständig</div>
+            <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>{tradesPanelLabel}</div>
             <StatusPanel loading={tradesQ.loading} error={tradesQ.error} onRetry={tradesQ.reload} />
-            {!tradesQ.loading && !tradesQ.error && (
+            {!tradesQ.loading && !tradesQ.error && openTrades.length === 0 && (
+              <div style={{ padding: '14px 12px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--txt2)' }}>
+                {dateFilter ? `Keine Trades am ${fmtDeDate(dateFilter)}.` : 'Keine Trades.'}
+              </div>
+            )}
+            {!tradesQ.loading && !tradesQ.error && openTrades.length > 0 && (
               <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflowX: 'auto' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '74px 60px 54px 84px 84px 84px 110px 60px 72px 1fr', gap: 8, padding: '4px 10px', color: 'var(--txt3)', borderBottom: '1px solid var(--line)', minWidth: 820 }}>
                   <div>SYMBOL</div><div>RICHT.</div><div style={{ textAlign: 'right' }}>VOL.</div><div style={{ textAlign: 'right' }}>EINSTIEG</div><div style={{ textAlign: 'right' }}>SL</div><div style={{ textAlign: 'right' }}>TP</div><div>STRATEGIE</div><div style={{ textAlign: 'right' }}>FAKTOR</div><div style={{ textAlign: 'right' }}>LAUFZEIT</div><div style={{ textAlign: 'right' }}>P/L</div>
@@ -202,9 +281,16 @@ export default function LogPage() {
 
           <ErrorBoundary>
           <div style={{ background: 'var(--panel)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>Vollständige Aktivitäts-Historie</div>
+            <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt2)', textTransform: 'uppercase' }}>
+              {dateFilter ? `Aktivitäts-Historie · ${fmtDeDate(dateFilter)}` : 'Vollständige Aktivitäts-Historie'}
+            </div>
             <StatusPanel loading={activityQ.loading} error={activityQ.error} onRetry={activityQ.reload} />
-            {!activityQ.loading && !activityQ.error && (
+            {!activityQ.loading && !activityQ.error && activityLog.length === 0 && (
+              <div style={{ padding: '14px 10px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--txt2)' }}>
+                {dateFilter ? `Keine Log-Einträge am ${fmtDeDate(dateFilter)}.` : 'Keine Log-Einträge.'}
+              </div>
+            )}
+            {!activityQ.loading && !activityQ.error && activityLog.length > 0 && (
               <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, lineHeight: 1.9, padding: '7px 10px', overflow: 'auto', flex: 1, minHeight: 0 }}>
                 {activityLog.map((a, i) => (
                   <div key={i} style={{ borderBottom: '1px solid var(--line)', padding: '3px 0', color: 'var(--txt2)' }}>
@@ -231,7 +317,7 @@ export default function LogPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3 }}>
               {calRaw.map((c, i) => {
                 if (!c) return <div key={i} />;
-                const selected = c.day === selectedDay;
+                const selected = c.day === highlightedDay;
                 let bg, border, dayColor, pnlShort, pnlColor;
                 if (!c.hasData) {
                   bg = selected ? 'var(--panel3)' : 'var(--panel)';
@@ -246,7 +332,11 @@ export default function LogPage() {
                   dayColor = 'var(--txt2)';
                 }
                 return (
-                  <button key={i} onClick={() => setSelectedDay(c.day)} style={{ aspectRatio: '1', background: bg, border: `1px solid ${border}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontFamily: "'IBM Plex Mono',monospace", padding: 2 }}>
+                  <button
+                    key={i}
+                    onClick={() => applyDateFilter(`${calendarQ.data.year}-${pad2(calendarQ.data.month)}-${pad2(c.day)}`)}
+                    style={{ aspectRatio: '1', background: bg, border: `1px solid ${border}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontFamily: "'IBM Plex Mono',monospace", padding: 2 }}
+                  >
                     <div style={{ fontSize: 9, color: dayColor }}>{c.day}</div>
                     {c.hasData && <div style={{ fontSize: 8, color: pnlColor, marginTop: 1 }}>{pnlShort}</div>}
                   </button>
@@ -256,7 +346,7 @@ export default function LogPage() {
           </div>
           )}
           <div style={{ padding: '10px 12px', borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>Tag {selectedDay} · nach Quelle</div>
+            <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--txt3)', textTransform: 'uppercase' }}>{highlightedDay ? `Tag ${highlightedDay} · nach Quelle` : 'Kein Tag ausgewählt'}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
               <div style={{ width: 9, height: 9, background: 'var(--txt2)' }} /><div style={{ flex: 1, color: 'var(--txt2)' }}>MT5</div><div>{selDay ? fmtSigned(selDay.mt5) : '—'}</div>
             </div>

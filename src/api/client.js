@@ -98,13 +98,23 @@ export function fetchStrategies() {
   return getJson('/api/strategies');
 }
 
-export function fetchTrades(status) {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+// `date` (optional, 'YYYY-MM-DD' Europe/Berlin calendar day — see
+// src/lib/berlinDay.js) is composable with `status`: the worker AND-combines
+// them (see worker/src/routes/api.js's getTrades).
+export function fetchTrades(status, date) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (date) params.set('date', date);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   return getJson(`/api/trades${qs}`);
 }
 
-export function fetchActivityLog(source) {
-  const qs = source ? `?source=${encodeURIComponent(source)}` : '';
+// `date` composable with `source`, same convention as fetchTrades.
+export function fetchActivityLog(source, date) {
+  const params = new URLSearchParams();
+  if (source) params.set('source', source);
+  if (date) params.set('date', date);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   return getJson(`/api/activity-log${qs}`);
 }
 
