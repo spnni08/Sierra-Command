@@ -20,17 +20,25 @@ function Shell() {
   // see LogPage.jsx's applyDateFilter) should land on the Log page itself,
   // not the Dashboard default, so the filtered view is actually reachable
   // by URL. Read once at mount; LogPage owns re-reading/writing `date` for
-  // the rest of its lifetime (see its own popstate listener).
-  const [page, setPage] = useState(() =>
-    new URLSearchParams(window.location.search).get('date') ? 'log' : 'dash'
-  );
+  // the rest of its lifetime (see its own popstate listener). Same idea for
+  // ?view=cards (Auswertung.jsx's Tabelle/Kacheln toggle) — without this, a
+  // shared "card view" link would land on the Dashboard instead, since
+  // Auswertung.jsx only controls its OWN internal view state, not which
+  // page is showing.
+  const [page, setPage] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('date')) return 'log';
+    if (params.get('view')) return 'auswertung';
+    return 'dash';
+  });
 
-  // Leaving the Log page via the header nav (not via LogPage's own "Filter
-  // entfernen") would otherwise strand a stale ?date= in the URL bar —
-  // strip it so navigating to Dashboard/ProTerminal/etc. doesn't carry a
-  // filter param that page doesn't understand.
+  // Leaving the Log/Auswertung page via the header nav (not via LogPage's
+  // own "Filter entfernen" or Auswertung's own view toggle) would otherwise
+  // strand a stale ?date=/?view= in the URL bar — strip it so navigating to
+  // Dashboard/ProTerminal/etc. doesn't carry a filter/view param that page
+  // doesn't understand.
   useEffect(() => {
-    if (page !== 'log' && window.location.search) {
+    if (page !== 'log' && page !== 'auswertung' && window.location.search) {
       window.history.replaceState(null, '', window.location.pathname);
     }
   }, [page]);
