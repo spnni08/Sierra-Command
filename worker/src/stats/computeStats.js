@@ -25,6 +25,8 @@
 // for display is the frontend's job (Auswertung.jsx), per "nichts schätzen,
 // nichts runden, bevor gerechnet wird".
 
+import { sessionOf } from '../lib/sessions.js';
+
 // winRate/lossRate are null when there are no win/loss trades at all (only
 // breakeven, or zero trades) — expectancy is then not computable. When one
 // side has a zero rate (no wins, or no losses), that side's average is
@@ -199,4 +201,19 @@ export function normalizeTimeframe(raw) {
   // for genuinely missing data. An unmapped-but-real timeframe is not the
   // same thing as "we don't know" and shouldn't be presented as such.
   return value;
+}
+
+// Trading-session grouping label for one trade — the axis the "Nach
+// Session"/"Asset × Session" views group by, replacing the old
+// timeframe-based grouping (timeframe is still stored per trade, just no
+// longer what the evaluation groups by). A '1d'-timeframe trade (synthetic
+// daily crypto candles AND real-but-daily Forex/Index candles alike) has
+// no genuine intraday entry time — its opened_at is whatever arbitrary
+// point-in-day the backtest engine assigned to that candle, not a real
+// entry moment — so it deliberately gets '–' instead of being run through
+// sessionOf() at all, distinct from 'Außerhalb' (a real classification:
+// entry time known, no session was open). Never guessed.
+export function sessionGroupLabel(trade) {
+  if (normalizeTimeframe(trade.timeframe) === '1d') return '–';
+  return sessionOf(trade.openedAt).label;
 }

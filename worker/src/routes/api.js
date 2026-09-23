@@ -10,6 +10,7 @@
 
 import { signSettingsSession, signAppSession, hashPassword } from '../auth.js';
 import { berlinDayRangeUtc, berlinMonthRangeUtc, berlinDateParts, berlinDayOfMonth, isValidDateStr } from '../lib/berlinDay.js';
+import { SESSION_KEYS } from '../lib/sessions.js';
 
 export async function handleApiRoute(request, url, env) {
   const path = url.pathname.replace(/^\/api/, '');
@@ -324,6 +325,11 @@ async function putStrategySettings(request, env, strategyId) {
   if (
     typeof risk_per_trade_pct !== 'number' ||
     !Array.isArray(session_filter) ||
+    // Every entry must be one of lib/sessions.js's SESSION_KEYS — the same
+    // definition sessionOf()/the Pro-Terminal breakdown use, so "restrict
+    // this strategy to London+NY" actually means the same London/NY as
+    // everywhere else in the app, not an unrelated stored string.
+    !session_filter.every((s) => SESSION_KEYS.includes(s)) ||
     typeof correlation_limit !== 'number' ||
     typeof news_filter_threshold !== 'number' ||
     (params !== undefined && (typeof params !== 'object' || params === null || Array.isArray(params)))
@@ -331,8 +337,7 @@ async function putStrategySettings(request, env, strategyId) {
     return Response.json(
       {
         error: 'invalid_body',
-        message:
-          'Expected { risk_per_trade_pct: number, session_filter: string[], correlation_limit: number, news_filter_threshold: number, params?: object }',
+        message: `Expected { risk_per_trade_pct: number, session_filter: (${SESSION_KEYS.join('|')})[], correlation_limit: number, news_filter_threshold: number, params?: object }`,
       },
       { status: 400 }
     );

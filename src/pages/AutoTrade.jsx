@@ -5,16 +5,30 @@ import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
 import ErrorBoundary from '../components/ErrorBoundary';
 
+// Real session keys from worker/src/lib/sessions.js's SESSION_KEYS — the
+// old 'eu'/'us' vocabulary here had no relation to the session definition
+// used anywhere else in the app (Pro-Terminal's session breakdown, the
+// strategy-detail modal) and nothing ever validated it beyond
+// Array.isArray; this replaces it with the same 3-state toggle UX but real,
+// server-validated (routes/api.js) session keys.
+const SESSION_FILTER_PRESETS = [
+  [], // Alle Sessions
+  ['london', 'new_york', 'london_ny_overlap'], // London + New York
+  ['london_ny_overlap'], // Nur London/NY Overlap
+];
+
+function sameSessionSet(a, b) {
+  return a.length === b.length && new Set(a).size === new Set(b).size && a.every((s) => b.includes(s));
+}
+
 function sessionIdxFromFilter(filter) {
-  if (!Array.isArray(filter) || filter.length === 0) return 0; // Alle Sessions
-  if (filter.length === 1) return 2; // Ohne Asien (heuristic: partial filter)
-  return 1; // Nur EU+US
+  if (!Array.isArray(filter)) return 0;
+  const idx = SESSION_FILTER_PRESETS.findIndex((preset) => sameSessionSet(preset, filter));
+  return idx === -1 ? 0 : idx;
 }
 
 function sessionFilterFromIdx(idx) {
-  if (idx === 0) return [];
-  if (idx === 1) return ['eu', 'us'];
-  return ['eu'];
+  return SESSION_FILTER_PRESETS[idx] ?? [];
 }
 
 function newsIdxFromThreshold(t) {

@@ -13,16 +13,19 @@ const TRADES_LIMIT = 50;
 // bestCombo won't consider it.
 const MATRIX_MIN_TRADES = 10;
 
-// Same set + wording as worker/src/routes/stats.js's CRYPTO_SYMBOLS /
-// Auswertung.jsx's SYNTHETIC_CANDLE_TOOLTIP — duplicated for the same
-// reason as MATRIX_MIN_TRADES above (no cross-import between worker/ and
-// src/, and StrategyDetailModal can't import from Auswertung.jsx since that
-// file already imports this one). Computed here from byAssetTimeframe
-// (always the full source/range-filtered set, unlike trades.rows which can
-// be narrowed by the Asset/Timeframe filters in the "Alle Trades" tab) so
-// no backend change is needed.
-const SYNTHETIC_CANDLE_SYMBOLS = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+// Same wording as Auswertung.jsx's SYNTHETIC_CANDLE_TOOLTIP — the trigger
+// condition itself is now computed server-side (worker/src/routes/stats.js's
+// strategyDetailRoute, `hasSyntheticDailyCandles`), same as the main table,
+// since this modal no longer has a byAssetTimeframe grouping to derive it
+// from client-side.
 const SYNTHETIC_CANDLE_TOOLTIP = 'Backtest auf Tageskerzen ohne Intraday-Daten – nicht repräsentativ für Live-Timeframe';
+
+// Shown on the "–" session group/column — a 1d-timeframe backtest trade has
+// no genuine intraday entry time, so it's deliberately excluded from
+// session classification rather than guessed (see computeStats.js's
+// sessionGroupLabel). Distinct from "Außerhalb" (a real classification:
+// entry time known, no session was open).
+const NO_SESSION_TOOLTIP = 'Backtest auf Tageskerzen, keine Session bestimmbar';
 
 const REASON_LABEL = { sl: 'SL', tp: 'TP', signal: 'Signal', period_end: 'Ende Zeitraum' };
 function fmtReason(reason) {
@@ -59,9 +62,11 @@ function SortHeaderSmall({ label, sortKey, sort, onSort, align }) {
 
 const GROUP_GRID = '1fr 90px 110px 80px 110px 90px 110px 140px';
 
-// Shared table for the "Nach Asset" and "Nach Timeframe" tabs — same columns,
+// Shared table for the "Nach Asset" and "Nach Session" tabs — same columns,
 // same sort logic (compareByField, reused from Auswertung.jsx's main table),
-// just a different grouping key/label already computed server-side.
+// just a different grouping key/label already computed server-side. The
+// "–" (no session determinable) row, if present, gets the same explanatory
+// tooltip the matrix uses on its "–" column.
 function GroupTable({ rows, labelKey, labelHeader, sort, onSort }) {
   const sorted = useMemo(() => [...rows].sort((a, b) => compareByField(a, b, sort.key, sort.dir)), [rows, sort]);
   return (
@@ -81,7 +86,7 @@ function GroupTable({ rows, labelKey, labelHeader, sort, onSort }) {
       )}
       {sorted.map((row) => (
         <div key={row[labelKey]} style={{ display: 'grid', gridTemplateColumns: GROUP_GRID, gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--line)' }}>
-          <div style={{ color: 'var(--txt)' }}>{row[labelKey]}</div>
+          <div style={{ color: 'var(--txt)' }} title={row[labelKey] === '–' ? NO_SESSION_TOOLTIP : undefined}>{row[labelKey]}</div>
           <div style={{ textAlign: 'right', color: 'var(--txt)' }}>{fmtInt(row.tradeCount)}</div>
           <div style={{ textAlign: 'right', color: 'var(--txt)' }}>{fmtUsd(row.pnlTotalUsd)}</div>
           <div style={{ textAlign: 'right', color: 'var(--txt)' }} title={row.winRate === null ? REASON.winRate : undefined}>{fmtPct(row.winRate)}</div>
@@ -105,29 +110,33 @@ const MATRIX_METRICS = [
 function bestComboSentence(bestCombo) {
   if (!bestCombo) return `Keine Kombination mit mindestens ${MATRIX_MIN_TRADES} Trades.`;
   const valueText = bestCombo.metric === 'expectancyR' ? fmtR(bestCombo.value) : fmtUsd(bestCombo.value);
-  return `Beste Kombination (min. ${MATRIX_MIN_TRADES} Trades): ${bestCombo.symbol} · ${bestCombo.timeframe}, Expectancy ${valueText} aus ${bestCombo.tradeCount} Trades`;
+  return `Beste Kombination (min. ${MATRIX_MIN_TRADES} Trades): ${bestCombo.symbol} · ${bestCombo.session}, Expectancy ${valueText} aus ${bestCombo.tradeCount} Trades`;
 }
 
-function AssetTimeframeMatrix({ byAssetTimeframe, bestCombo, onCellClick }) {
+function AssetSessionMatrix({ byAssetSession, bestCombo, onCellClick }) {
   const [metricKey, setMetricKey] = useState('expectancyR');
   const metric = MATRIX_METRICS.find((m) => m.key === metricKey);
 
-  const { symbols, timeframes, cellByKey } = useMemo(() => {
+  const { symbols, sessions, cellByKey } = useMemo(() => {
     const symbolSet = new Set();
-    const timeframeSet = new Set();
+    const sessionSet = new Set();
     const map = new Map();
-    for (const c of byAssetTimeframe) {
+    for (const c of byAssetSession) {
       symbolSet.add(c.symbol);
-      timeframeSet.add(c.timeframe);
-      map.set(`${c.symbol}::${c.timeframe}`, c);
+      sessionSet.add(c.session);
+      map.set(`${c.symbol}::${c.session}`, c);
     }
-    const tfList = [...timeframeSet].filter((t) => t !== 'unbekannt').sort();
-    if (timeframeSet.has('unbekannt')) tfList.push('unbekannt');
-    return { symbols: [...symbolSet].sort(), timeframes: tfList, cellByKey: map };
-  }, [byAssetTimeframe]);
+    // "–" (no session determinable — 1d-timeframe trades) is pushed to the
+    // end, same treatment 'unbekannt' got in the old timeframe matrix —
+    // it's a "not applicable" column, not a real session to rank among the
+    // others alphabetically.
+    const sessionList = [...sessionSet].filter((s) => s !== '–').sort();
+    if (sessionSet.has('–')) sessionList.push('–');
+    return { symbols: [...symbolSet].sort(), sessions: sessionList, cellByKey: map };
+  }, [byAssetSession]);
 
   const intensityByKey = useMemo(() => {
-    const qualifying = byAssetTimeframe.filter((c) => c.tradeCount >= MATRIX_MIN_TRADES && c[metricKey] != null);
+    const qualifying = byAssetSession.filter((c) => c.tradeCount >= MATRIX_MIN_TRADES && c[metricKey] != null);
     if (qualifying.length === 0) return new Map();
     const values = qualifying.map((c) => Math.abs(c[metricKey]));
     const min = Math.min(...values);
@@ -135,10 +144,10 @@ function AssetTimeframeMatrix({ byAssetTimeframe, bestCombo, onCellClick }) {
     const map = new Map();
     for (const c of qualifying) {
       const t = max > min ? (Math.abs(c[metricKey]) - min) / (max - min) : 1;
-      map.set(`${c.symbol}::${c.timeframe}`, 0.15 + t * 0.65);
+      map.set(`${c.symbol}::${c.session}`, 0.15 + t * 0.65);
     }
     return map;
-  }, [byAssetTimeframe, metricKey]);
+  }, [byAssetSession, metricKey]);
 
   if (symbols.length === 0) {
     return <div style={{ padding: 16, fontSize: 11, color: 'var(--txt2)' }}>{REASON.noTrades}</div>;
@@ -156,16 +165,16 @@ function AssetTimeframeMatrix({ byAssetTimeframe, bestCombo, onCellClick }) {
       </div>
 
       <div style={{ overflow: 'auto' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: `120px repeat(${timeframes.length}, 90px)`, gap: 4, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `120px repeat(${sessions.length}, 130px)`, gap: 4, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
           <div />
-          {timeframes.map((tf) => (
-            <div key={tf} style={{ textAlign: 'center', color: 'var(--txt3)', padding: '2px 0' }}>{tf}</div>
+          {sessions.map((s) => (
+            <div key={s} style={{ textAlign: 'center', color: 'var(--txt3)', padding: '2px 0' }} title={s === '–' ? NO_SESSION_TOOLTIP : undefined}>{s}</div>
           ))}
           {symbols.map((sym) => (
             <Fragment key={sym}>
               <div style={{ display: 'flex', alignItems: 'center', color: 'var(--txt2)' }}>{sym}</div>
-              {timeframes.map((tf) => {
-                const key = `${sym}::${tf}`;
+              {sessions.map((s) => {
+                const key = `${sym}::${s}`;
                 const cell = cellByKey.get(key);
                 if (!cell) {
                   return (
@@ -177,7 +186,7 @@ function AssetTimeframeMatrix({ byAssetTimeframe, bestCombo, onCellClick }) {
                 return (
                   <button
                     key={key}
-                    onClick={() => onCellClick(sym, tf)}
+                    onClick={() => onCellClick(sym, s)}
                     title={lowData ? `wenig Daten (${cell.tradeCount} Trades)` : undefined}
                     style={{
                       all: 'unset', cursor: 'pointer', position: 'relative', height: 40, boxSizing: 'border-box',
@@ -207,11 +216,11 @@ function AssetTimeframeMatrix({ byAssetTimeframe, bestCombo, onCellClick }) {
   );
 }
 
-const TRADES_GRID = '150px 90px 70px 60px 90px 90px 90px 90px 90px 70px 70px 90px';
+const TRADES_GRID = '150px 90px 70px 130px 60px 90px 90px 90px 90px 90px 70px 70px 90px';
 
-function TradesTab({ detail, tradeSymbol, tradeTimeframe, setTradeSymbol, setTradeTimeframe, tradesOffset, setTradesOffset, tradesSort, tradesDir, onSort }) {
+function TradesTab({ detail, tradeSymbol, tradeSession, tradeWeekend, setTradeSymbol, setTradeSession, setTradeWeekend, tradesOffset, setTradesOffset, tradesSort, tradesDir, onSort }) {
   const symbolOptions = detail.byAsset.map((r) => r.symbol);
-  const timeframeOptions = detail.byTimeframe.map((r) => r.timeframe);
+  const sessionOptions = detail.bySession.map((r) => r.session);
   const { rows, total } = detail.trades;
   const from = total === 0 ? 0 : tradesOffset + 1;
   const to = Math.min(tradesOffset + TRADES_LIMIT, total);
@@ -227,12 +236,13 @@ function TradesTab({ detail, tradeSymbol, tradeTimeframe, setTradeSymbol, setTra
           {symbolOptions.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select
-          value={tradeTimeframe ?? ''} onChange={(e) => setTradeTimeframe(e.target.value || null)}
-          style={{ fontFamily: 'inherit', fontSize: 10, padding: '3px 6px', background: 'var(--panel3)', border: `1px solid ${tradeTimeframe ? 'var(--acc)' : 'var(--line2)'}`, color: 'var(--txt)' }}
+          value={tradeSession ?? ''} onChange={(e) => setTradeSession(e.target.value || null)}
+          style={{ fontFamily: 'inherit', fontSize: 10, padding: '3px 6px', background: 'var(--panel3)', border: `1px solid ${tradeSession ? 'var(--acc)' : 'var(--line2)'}`, color: 'var(--txt)' }}
         >
-          <option value="">ALLE TIMEFRAMES</option>
-          {timeframeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+          <option value="">ALLE SESSIONS</option>
+          {sessionOptions.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        <button onClick={() => setTradeWeekend(!tradeWeekend)} style={segBtn(tradeWeekend, true)}>WOCHENENDE</button>
         <div style={{ flex: 1 }} />
         <div style={{ color: 'var(--txt3)' }}>{total > 0 ? `${from}–${to} von ${total}` : '0 Trades'}</div>
         <button disabled={tradesOffset === 0} onClick={() => setTradesOffset(Math.max(0, tradesOffset - TRADES_LIMIT))} style={{ ...segBtn(false, true), opacity: tradesOffset === 0 ? 0.4 : 1 }}>ZURÜCK</button>
@@ -244,6 +254,7 @@ function TradesTab({ detail, tradeSymbol, tradeTimeframe, setTradeSymbol, setTra
           <SortHeaderSmall label="DATUM/UHRZEIT" sortKey="closedAt" sort={{ key: tradesSort, dir: tradesDir }} onSort={onSort} />
           <SortHeaderSmall label="SYMBOL" sortKey="symbol" sort={{ key: tradesSort, dir: tradesDir }} onSort={onSort} />
           <div style={{ color: 'var(--txt3)' }}>TF</div>
+          <SortHeaderSmall label="SESSION" sortKey="session" sort={{ key: tradesSort, dir: tradesDir }} onSort={onSort} />
           <div style={{ color: 'var(--txt3)' }}>RICHT.</div>
           <div style={{ textAlign: 'right', color: 'var(--txt3)' }}>ENTRY</div>
           <div style={{ textAlign: 'right', color: 'var(--txt3)' }}>SL</div>
@@ -260,6 +271,7 @@ function TradesTab({ detail, tradeSymbol, tradeTimeframe, setTradeSymbol, setTra
             <div style={{ color: 'var(--txt2)' }}>{fmtBerlinDateTime(t.closedAt)}</div>
             <div style={{ color: 'var(--txt)' }}>{t.symbol}</div>
             <div style={{ color: 'var(--txt2)' }}>{t.timeframe ?? 'unbekannt'}</div>
+            <div style={{ color: 'var(--txt2)' }} title={t.session === '–' ? NO_SESSION_TOOLTIP : undefined}>{t.session}{t.isWeekend ? ' (WE)' : ''}</div>
             <div style={{ color: 'var(--txt2)' }}>{fmtDirection(t.direction)}</div>
             <div style={{ textAlign: 'right', color: 'var(--txt)' }}>{fmtPrice(t.entry)}</div>
             <div style={{ textAlign: 'right', color: 'var(--txt)' }}>{fmtPrice(t.sl)}</div>
@@ -278,23 +290,25 @@ function TradesTab({ detail, tradeSymbol, tradeTimeframe, setTradeSymbol, setTra
 
 const TABS = [
   { key: 'asset', label: 'Nach Asset' },
-  { key: 'timeframe', label: 'Nach Timeframe' },
-  { key: 'matrix', label: 'Asset × Timeframe' },
+  { key: 'session', label: 'Nach Session' },
+  { key: 'matrix', label: 'Asset × Session' },
   { key: 'trades', label: 'Alle Trades' },
 ];
 
 export default function StrategyDetailModal({ strategyId, strategyName, source, sourceLabel, range, rangeLabel, customFrom, customTo, onClose }) {
   const [activeTab, setActiveTab] = useState('asset');
   const [assetSort, setAssetSort] = useState({ key: 'expectancyUsd', dir: 'desc' });
-  const [timeframeSort, setTimeframeSort] = useState({ key: 'expectancyUsd', dir: 'desc' });
+  const [sessionSort, setSessionSort] = useState({ key: 'expectancyUsd', dir: 'desc' });
   const [tradeSymbol, setTradeSymbolState] = useState(null);
-  const [tradeTimeframe, setTradeTimeframeState] = useState(null);
+  const [tradeSession, setTradeSessionState] = useState(null);
+  const [tradeWeekend, setTradeWeekendState] = useState(false);
   const [tradesOffset, setTradesOffset] = useState(0);
   const [tradesSort, setTradesSort] = useState('closedAt');
   const [tradesDir, setTradesDir] = useState('desc');
 
   const setTradeSymbol = useCallback((v) => { setTradeSymbolState(v); setTradesOffset(0); }, []);
-  const setTradeTimeframe = useCallback((v) => { setTradeTimeframeState(v); setTradesOffset(0); }, []);
+  const setTradeSession = useCallback((v) => { setTradeSessionState(v); setTradesOffset(0); }, []);
+  const setTradeWeekend = useCallback((v) => { setTradeWeekendState(v); setTradesOffset(0); }, []);
 
   const handleTradesSort = useCallback((key) => {
     setTradesOffset(0);
@@ -306,9 +320,9 @@ export default function StrategyDetailModal({ strategyId, strategyName, source, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradesSort]);
 
-  const handleMatrixCellClick = useCallback((symbol, timeframe) => {
+  const handleMatrixCellClick = useCallback((symbol, session) => {
     setTradeSymbolState(symbol);
-    setTradeTimeframeState(timeframe);
+    setTradeSessionState(session);
     setTradesOffset(0);
     setActiveTab('trades');
   }, []);
@@ -325,16 +339,13 @@ export default function StrategyDetailModal({ strategyId, strategyName, source, 
     () =>
       fetchStrategyDetail(strategyId, {
         source, range, from: customFrom, to: customTo,
-        tradeSymbol, tradeTimeframe, tradesLimit: TRADES_LIMIT, tradesOffset, tradesSort, tradesDir,
+        tradeSymbol, tradeSession, tradeWeekend, tradesLimit: TRADES_LIMIT, tradesOffset, tradesSort, tradesDir,
       }),
-    [strategyId, source, range, customFrom, customTo, tradeSymbol, tradeTimeframe, tradesOffset, tradesSort, tradesDir]
+    [strategyId, source, range, customFrom, customTo, tradeSymbol, tradeSession, tradeWeekend, tradesOffset, tradesSort, tradesDir]
   );
   const detailQ = useFetch(loadDetail, [loadDetail]);
   const detail = detailQ.data;
   const name = detail?.name ?? strategyName ?? strategyId;
-  const hasSyntheticDailyCandles =
-    source === 'backtest' &&
-    !!detail?.byAssetTimeframe.some((c) => c.timeframe === '1d' && SYNTHETIC_CANDLE_SYMBOLS.has(c.symbol));
 
   return (
     <div
@@ -358,7 +369,7 @@ export default function StrategyDetailModal({ strategyId, strategyName, source, 
 
         {detail && (
           <>
-            {hasSyntheticDailyCandles && (
+            {detail.hasSyntheticDailyCandles && (
               <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span>⚠</span>
                 <span>{SYNTHETIC_CANDLE_TOOLTIP}</span>
@@ -385,17 +396,17 @@ export default function StrategyDetailModal({ strategyId, strategyName, source, 
               {activeTab === 'asset' && (
                 <GroupTable rows={detail.byAsset} labelKey="symbol" labelHeader="ASSET" sort={assetSort} onSort={(key) => setAssetSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }))} />
               )}
-              {activeTab === 'timeframe' && (
-                <GroupTable rows={detail.byTimeframe} labelKey="timeframe" labelHeader="TIMEFRAME" sort={timeframeSort} onSort={(key) => setTimeframeSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }))} />
+              {activeTab === 'session' && (
+                <GroupTable rows={detail.bySession} labelKey="session" labelHeader="SESSION" sort={sessionSort} onSort={(key) => setSessionSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }))} />
               )}
               {activeTab === 'matrix' && (
-                <AssetTimeframeMatrix byAssetTimeframe={detail.byAssetTimeframe} bestCombo={detail.bestCombo} onCellClick={handleMatrixCellClick} />
+                <AssetSessionMatrix byAssetSession={detail.byAssetSession} bestCombo={detail.bestCombo} onCellClick={handleMatrixCellClick} />
               )}
               {activeTab === 'trades' && (
                 <TradesTab
                   detail={detail}
-                  tradeSymbol={tradeSymbol} tradeTimeframe={tradeTimeframe}
-                  setTradeSymbol={setTradeSymbol} setTradeTimeframe={setTradeTimeframe}
+                  tradeSymbol={tradeSymbol} tradeSession={tradeSession} tradeWeekend={tradeWeekend}
+                  setTradeSymbol={setTradeSymbol} setTradeSession={setTradeSession} setTradeWeekend={setTradeWeekend}
                   tradesOffset={tradesOffset} setTradesOffset={setTradesOffset}
                   tradesSort={tradesSort} tradesDir={tradesDir} onSort={handleTradesSort}
                 />
