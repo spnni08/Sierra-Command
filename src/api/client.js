@@ -170,6 +170,30 @@ export function fetchStrategyStats({ source, range, from, to, symbol }) {
   return getJson(`/stats/strategies?${params.toString()}`);
 }
 
+// Per-strategy breakdown (by asset, by timeframe, by asset x timeframe) plus
+// a paginated/filterable trade list — see worker/src/routes/stats.js's
+// strategyDetailRoute. `tradeSymbol`/`tradeTimeframe`/`tradesLimit`/
+// `tradesOffset`/`tradesSort`/`tradesDir` only affect the `trades` sub-list
+// (e.g. a matrix-cell click), never the byAsset/byTimeframe/byAssetTimeframe
+// groupings, which always reflect the full source/range-filtered trade set.
+export function fetchStrategyDetail(
+  strategyId,
+  { source, range, from, to, tradeSymbol, tradeTimeframe, tradesLimit, tradesOffset, tradesSort, tradesDir }
+) {
+  const params = new URLSearchParams();
+  params.set('source', source);
+  if (range) params.set('range', range);
+  if (range === 'custom' && from) params.set('from', from);
+  if (range === 'custom' && to) params.set('to', to);
+  if (tradeSymbol) params.set('tradeSymbol', tradeSymbol);
+  if (tradeTimeframe) params.set('tradeTimeframe', tradeTimeframe);
+  if (tradesLimit) params.set('tradesLimit', tradesLimit);
+  if (tradesOffset) params.set('tradesOffset', tradesOffset);
+  if (tradesSort) params.set('tradesSort', tradesSort);
+  if (tradesDir) params.set('tradesDir', tradesDir);
+  return getJson(`/stats/strategy/${encodeURIComponent(strategyId)}?${params.toString()}`);
+}
+
 export function fetchPnlCalendar(year, month) {
   const params = new URLSearchParams();
   if (year) params.set('year', year);

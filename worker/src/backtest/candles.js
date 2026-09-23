@@ -59,7 +59,7 @@ async function fetchCryptoCandles(symbol, startDate, endDate, env) {
 
   const startMs = startDate.getTime();
   const endMs = endDate.getTime();
-  return raw.prices
+  const candles = raw.prices
     .map(([timestamp, price], i) => ({
       timestamp,
       open: price,
@@ -69,6 +69,7 @@ async function fetchCryptoCandles(symbol, startDate, endDate, env) {
       volume: volumes[i]?.[1] ?? NaN,
     }))
     .filter((c) => c.timestamp >= startMs && c.timestamp <= endMs);
+  return { candles, timeframe: '1d' };
 }
 
 // CoinGecko's /ohlc `days` values only accept this exact enum (see
@@ -90,6 +91,17 @@ function pickOhlcDaysBucket(spanDays) {
     if (spanDays <= bucket) return bucket;
   }
   return 365; // free-tier hard cap — caller's own >365-day clamping (window.js) already prevents spanDays from exceeding this in practice
+}
+
+// Maps the `days` bucket actually sent to CoinGecko's /ohlc to the real
+// candle interval it responds with — see pickOhlcDaysBucket's caller
+// comment above for the empirically-confirmed granularity boundaries. This
+// codebase's OHLC_DAYS_BUCKETS enum never produces `2`, only `1`, so the
+// "days=1-2 -> 30min" case only ever actually occurs here as bucket===1.
+function ohlcBucketToTimeframe(bucket) {
+  if (bucket === 1) return '30m';
+  if (bucket <= 30) return '4h';
+  return '4d';
 }
 
 // Real O/H/L/C candles for strategies whose factors need actual candle body/
@@ -142,7 +154,7 @@ async function fetchCryptoRealOhlcCandles(symbol, startDate, endDate, env) {
 
   const startMs = startDate.getTime();
   const endMs = endDate.getTime();
-  return ohlcRaw
+  const candles = ohlcRaw
     .map(([timestamp, open, high, low, close]) => ({
       timestamp,
       open,
@@ -152,6 +164,7 @@ async function fetchCryptoRealOhlcCandles(symbol, startDate, endDate, env) {
       volume: volumeByDay.get(dayKey(timestamp)) ?? NaN,
     }))
     .filter((c) => c.timestamp >= startMs && c.timestamp <= endMs);
+  return { candles, timeframe: ohlcBucketToTimeframe(bucket) };
 }
 
 // `interval` defaults to '1day' (every caller before ict_sweep_mss used
@@ -190,7 +203,7 @@ async function fetchForexIndexCandles(symbol, startDate, endDate, env, interval 
     throw new Error(`twelvedata_api_error:${data.message ?? 'unknown'}`);
   }
 
-  return data.values
+  const candles = data.values
     .map((v) => ({
       timestamp: Date.parse(v.datetime.replace(' ', 'T') + (v.datetime.includes(':') ? 'Z' : 'T00:00:00Z')),
       open: parseFloat(v.open),
@@ -199,6 +212,7 @@ async function fetchForexIndexCandles(symbol, startDate, endDate, env, interval 
       close: parseFloat(v.close),
     }))
     .reverse(); // Twelve Data returns newest-first
+  return { candles, timeframe: interval === '1day' ? '1d' : interval.replace('min', 'm') };
 }
 
 // Strategies whose adapter needs real candle body/wick geometry — see
@@ -235,11 +249,15 @@ export const REAL_OHLC_STRATEGY_IDS = new Set([
 export const INTRADAY_FOREX_STRATEGY_IDS = new Set(['ict_sweep_mss', 'ict_sweep_mss_sl']);
 
 /**
- * Fetches and returns chronologically-sorted candles for the given
- * symbol/date range. `strategyId` is optional and only changes behavior for
- * crypto: the handful of strategies in REAL_OHLC_STRATEGY_IDS get real
- * O/H/L/C (+ merged-in daily volume) from /ohlc instead of the flat-OHLC
- * /market_chart every other crypto adapter uses.
+ * Fetches chronologically-sorted candles for the given symbol/date range,
+ * returned as `{ candles, timeframe }`. `strategyId` is optional and only
+ * changes behavior for crypto: the handful of strategies in
+ * REAL_OHLC_STRATEGY_IDS get real O/H/L/C (+ merged-in daily volume) from
+ * /ohlc instead of the flat-OHLC /market_chart every other crypto adapter
+ * uses. `timeframe` is the interval actually used to fetch this batch (e.g.
+ * '1d','4h','30m','4d','15m') — it varies per strategy/symbol/window-length
+ * (see each fetch function above), never a fixed/assumed value, and is what
+ * engine.js stores on every backtest_trades row from this run.
  */
 export async function fetchHistoricalCandles(symbol, startDate, endDate, env, strategyId) {
   const cls = assetClassFor(symbol);

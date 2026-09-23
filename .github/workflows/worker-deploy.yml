@@ -129,6 +129,30 @@ jobs:
           else
             echo "backtest_runs.win_rate already present — skipping."
           fi
+
+          echo "Probing trades.timeframe..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT timeframe FROM trades LIMIT 1" >/tmp/probe_trades_timeframe.log 2>&1
+          TRADES_TIMEFRAME_PROBE=$?
+          set -e
+          if [ $TRADES_TIMEFRAME_PROBE -ne 0 ]; then
+            echo "trades.timeframe missing — adding it (plain ADD COLUMN, nullable, no rebuild needed)."
+            npx wrangler d1 execute sierra-command-db --remote --command "ALTER TABLE trades ADD COLUMN timeframe TEXT"
+          else
+            echo "trades.timeframe already present — skipping."
+          fi
+
+          echo "Probing backtest_trades.timeframe..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT timeframe FROM backtest_trades LIMIT 1" >/tmp/probe_backtest_trades_timeframe.log 2>&1
+          BACKTEST_TRADES_TIMEFRAME_PROBE=$?
+          set -e
+          if [ $BACKTEST_TRADES_TIMEFRAME_PROBE -ne 0 ]; then
+            echo "backtest_trades.timeframe missing — adding it (plain ADD COLUMN, nullable, no rebuild needed)."
+            npx wrangler d1 execute sierra-command-db --remote --command "ALTER TABLE backtest_trades ADD COLUMN timeframe TEXT"
+          else
+            echo "backtest_trades.timeframe already present — skipping."
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # ict_sweep_mss/_sl's default logic-threshold overrides — deliberately

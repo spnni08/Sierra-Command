@@ -21,22 +21,23 @@ function Shell() {
   // not the Dashboard default, so the filtered view is actually reachable
   // by URL. Read once at mount; LogPage owns re-reading/writing `date` for
   // the rest of its lifetime (see its own popstate listener). Same idea for
-  // ?view=cards (Auswertung.jsx's Tabelle/Kacheln toggle) — without this, a
-  // shared "card view" link would land on the Dashboard instead, since
-  // Auswertung.jsx only controls its OWN internal view state, not which
-  // page is showing.
+  // ?view=cards (Auswertung.jsx's Tabelle/Kacheln toggle) and ?strategy=
+  // (Auswertung.jsx's StrategyDetailModal deep link) — without this, a
+  // shared card-view or strategy-detail link would land on the Dashboard
+  // instead, since Auswertung.jsx only controls its OWN internal state, not
+  // which page is showing.
   const [page, setPage] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('date')) return 'log';
-    if (params.get('view')) return 'auswertung';
+    if (params.get('view') || params.get('strategy')) return 'auswertung';
     return 'dash';
   });
 
   // Leaving the Log/Auswertung page via the header nav (not via LogPage's
-  // own "Filter entfernen" or Auswertung's own view toggle) would otherwise
-  // strand a stale ?date=/?view= in the URL bar — strip it so navigating to
-  // Dashboard/ProTerminal/etc. doesn't carry a filter/view param that page
-  // doesn't understand.
+  // own "Filter entfernen" or Auswertung's own view/modal state) would
+  // otherwise strand a stale ?date=/?view=/?strategy= in the URL bar —
+  // strip it so navigating to Dashboard/ProTerminal/etc. doesn't carry a
+  // filter/view/modal param that page doesn't understand.
   useEffect(() => {
     if (page !== 'log' && page !== 'auswertung' && window.location.search) {
       window.history.replaceState(null, '', window.location.pathname);

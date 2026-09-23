@@ -119,3 +119,84 @@ export function computeStrategyStatsRow(trades) {
     pnlSeries,
   };
 }
+
+// Groups an already-filtered trade array by an arbitrary key function and
+// runs computeStrategyStatsRow() (the exact same aggregation the main
+// /stats/strategies endpoint uses) over each group — the per-asset/per-
+// timeframe/per-asset-and-timeframe breakdowns in GET /stats/strategy/:id
+// are all just this called with a different key, never a second metrics
+// implementation. `keyFn` receives a trade and returns its group key
+// (already normalized by the caller, e.g. via normalizeSymbol/
+// normalizeTimeframe below); each result row carries that key back as `key`
+// so the caller can attach it under whatever field name makes sense there
+// (symbol, timeframe, or both for the asset x timeframe matrix).
+export function groupStrategyStats(trades, keyFn) {
+  const groups = new Map();
+  for (const t of trades) {
+    const key = keyFn(t);
+    const list = groups.get(key);
+    if (list) list.push(t);
+    else groups.set(key, [t]);
+  }
+  return [...groups.entries()].map(([key, groupTrades]) => ({
+    key,
+    ...computeStrategyStatsRow(groupTrades),
+  }));
+}
+
+// Collapses known alternate spellings of the same asset to one canonical
+// form, for GROUPING/DISPLAY only — never rewrites what's actually stored
+// (trades.symbol keeps whatever it was written with). Reuses the same
+// alias pairs already hand-maintained elsewhere in this codebase
+// (simulation/oanda-costs.js's ALIASES, routes/twelvedata.js's SYMBOL_MAP)
+// rather than inventing a new mapping; OANDA-simulated trades are already
+// normalized at write time via resolveOandaCostSymbol, so this mostly
+// guards against a webhook payload sending an unnormalized forex spelling
+// (no alias table exists on that path today). Crypto symbols (BTCUSDT etc.)
+// have no observed alternate spelling anywhere in this codebase, so they
+// pass through unchanged (just uppercased).
+const SYMBOL_ALIASES = {
+  EUR_USD: 'EURUSD',
+  'EUR/USD': 'EURUSD',
+  SPX: 'SPX500',
+  SP500: 'SPX500',
+  US500: 'SPX500',
+  NASDAQ: 'NAS100',
+  NDX: 'NAS100',
+  US100: 'NAS100',
+};
+
+export function normalizeSymbol(raw) {
+  if (raw == null) return 'unbekannt';
+  const upper = String(raw).toUpperCase().trim();
+  if (!upper) return 'unbekannt';
+  return SYMBOL_ALIASES[upper] ?? upper;
+}
+
+// Maps TradingView's raw {{interval}} codes (plain minute counts, or 'D'/'W'
+// for daily/weekly) AND the backtest engine's own human-readable labels
+// (already in the target form, e.g. '15m'/'4h' — see backtest/candles.js)
+// to one consistent set, so a strategy traded live on "240" and backtested
+// on "4h" land in the same matrix column instead of fragmenting into two.
+// Like normalizeSymbol, this only affects GROUPING — the raw value passed
+// in (whatever the webhook payload or the backtest engine actually wrote)
+// is never altered in the database. Anything unrecognized, or missing
+// entirely, becomes 'unbekannt' — never guessed from context.
+const TRADINGVIEW_INTERVAL_CODES = {
+  1: '1m', 5: '5m', 15: '15m', 30: '30m', 60: '1h', 240: '4h',
+  D: '1d', '1D': '1d', W: '1w', '1W': '1w',
+};
+const KNOWN_TIMEFRAME_LABELS = new Set(['1m', '5m', '15m', '30m', '1h', '4h', '1d', '4d', '1w']);
+
+export function normalizeTimeframe(raw) {
+  if (raw == null) return 'unbekannt';
+  const value = String(raw).trim();
+  if (!value) return 'unbekannt';
+  if (KNOWN_TIMEFRAME_LABELS.has(value)) return value;
+  if (TRADINGVIEW_INTERVAL_CODES[value] !== undefined) return TRADINGVIEW_INTERVAL_CODES[value];
+  // Present but not one of the known codes/labels above — kept as its own
+  // distinct value rather than folded into 'unbekannt', which is reserved
+  // for genuinely missing data. An unmapped-but-real timeframe is not the
+  // same thing as "we don't know" and shouldn't be presented as such.
+  return value;
+}

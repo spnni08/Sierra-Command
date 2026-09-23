@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS trades (
   -- (static SL/TP) or 'trailing' (SL trails the strategy's anchor — see
   -- worker/src/strategies/*.js EXIT.trailing.anchor per strategy).
   exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing')),
+  -- The chart timeframe the TradingView alert fired from (e.g. TradingView's
+  -- raw {{interval}} codes: '1','5','15','60','240','D','W'), read verbatim
+  -- from the webhook payload (routes/webhook.js) — never inferred from
+  -- anything else. NULL for trades opened before this column existed, or
+  -- whose alert didn't include it; the API/UI show "unbekannt" for NULL,
+  -- never guess a value. Raw TradingView codes and the backtest engine's own
+  -- human-readable labels ('15m','4h',...) are normalized to a common set
+  -- only at query/grouping time (stats/computeStats.js's normalizeTimeframe)
+  -- — this column always keeps exactly what was received/computed, nothing
+  -- is rewritten on write.
+  timeframe TEXT,
   opened_at TEXT NOT NULL DEFAULT (datetime('now')),
   closed_at TEXT
 );
@@ -130,6 +141,13 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
   exit_price REAL NOT NULL,
   pnl REAL NOT NULL,
   reason TEXT NOT NULL CHECK (reason IN ('sl','tp','signal','period_end')),
+  -- The candle interval this specific trade was actually simulated on (e.g.
+  -- '15m','30m','4h','1d','4d') — the backtest engine picks this implicitly
+  -- per strategy/symbol/window-length (see backtest/candles.js), so it's
+  -- always known and set for every row written from here on. Existing rows
+  -- from before this column existed are NULL, shown as "unbekannt" same as
+  -- trades.timeframe — never backfilled by guessing.
+  timeframe TEXT,
   opened_at TEXT NOT NULL,
   closed_at TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

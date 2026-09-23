@@ -120,6 +120,38 @@ describe('webhook fan-out to paired _sl trade', () => {
     expect(env.tables.trades).toHaveLength(1);
   });
 
+  it('reads payload.timeframe verbatim and stores it on both fan-out trades', async () => {
+    const env = makeEnv();
+    await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        body: JSON.stringify({ ...baselineLongPayload, timeframe: '240' }),
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB }
+    );
+
+    expect(env.tables.trades).toHaveLength(2);
+    // Stored exactly as received ('240', not normalized to '4h' or anything
+    // else here) — normalization only happens at query/grouping time.
+    expect(env.tables.trades.every((t) => t.timeframe === '240')).toBe(true);
+  });
+
+  it('stores NULL (never a guessed value) when payload.timeframe is missing', async () => {
+    const env = makeEnv();
+    await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline_sl', {
+        method: 'POST',
+        body: JSON.stringify(baselineLongPayload), // no timeframe field
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline_sl'),
+      { DB: env.DB }
+    );
+
+    expect(env.tables.trades).toHaveLength(1);
+    expect(env.tables.trades[0].timeframe).toBeNull();
+  });
+
   it('a rejected fixed-variant signal does not fan out or create trades', async () => {
     const env = makeEnv();
     const res = await handleWebhookRoute(
