@@ -26,6 +26,26 @@ const RANGE_OPTIONS = [
   { key: 'custom', label: 'Eigener Zeitraum' },
 ];
 
+// Exact wording as specified — shown wherever a backtest result was run on
+// CoinGecko's synthetic flat-OHLC daily candle (open=high=low=close) rather
+// than a real intraday-aggregated one; see worker/src/routes/stats.js's
+// hasSyntheticDailyCandles field.
+const SYNTHETIC_CANDLE_TOOLTIP = 'Backtest auf Tageskerzen ohne Intraday-Daten – nicht repräsentativ für Live-Timeframe';
+
+function SyntheticCandleBadge({ style }) {
+  return (
+    <span
+      title={SYNTHETIC_CANDLE_TOOLTIP}
+      style={{
+        fontSize: 9, color: 'var(--txt3)', border: '1px solid var(--line2)', padding: '1px 5px',
+        cursor: 'help', whiteSpace: 'nowrap', ...style,
+      }}
+    >
+      ⚠ Tageskerzen
+    </span>
+  );
+}
+
 const HEADER_TOOLTIP = {
   trades: 'Anzahl geschlossener Trades. Klein darunter: Gewinne / Verluste / Breakeven.',
   pnl: 'Summe der realisierten Ergebnisse. In R nur über Trades mit hinterlegtem SL.',
@@ -132,8 +152,9 @@ function StatsTable({ rows, sort, onSort, rowRefs, highlightedStrategyId, onOpen
               transition: 'background 0.4s ease',
             }}
           >
-            <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
               <StrategyNameButton name={row.name} active={row.active} onClick={() => onOpenDetail(row.strategyId)} />
+              {row.hasSyntheticDailyCandles && <SyntheticCandleBadge />}
             </div>
 
             <div style={{ textAlign: 'right' }}>
@@ -205,6 +226,7 @@ function StrategyCard({ row, symbolLabel, sourceLabel, onOpen, onOpenDetail }) {
         </div>
       </div>
 
+      {row.hasSyntheticDailyCandles && <SyntheticCandleBadge style={{ alignSelf: 'flex-start' }} />}
       {row.lowData && row.tradeCount > 0 && <div style={{ fontSize: 9, color: 'var(--txt3)' }}>Noch wenig Daten</div>}
 
       <div>

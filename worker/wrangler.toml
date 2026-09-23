@@ -76,8 +76,21 @@ WAVESCOUT_API_URL = "https://tradingview-bot.spnn08.workers.dev"
 #                   then:
 #                     wrangler secret put APP_PASSWORD_HASH
 #                   (paste the resulting hex string, not the password).
-#   WEBHOOK_SECRET - optional; if set, /webhook/<strategy> requires a
-#                     matching `?secret=` query param (see index.js) since
-#                     TradingView alert requests can't carry a custom
-#                     Authorization header. Unset today because no real
-#                     TradingView alerts point at /webhook yet.
+#   WEBHOOK_SECRET - if set, /webhook/<strategy> checks it against a
+#                     "secret" field in the JSON payload (timing-safe
+#                     compare — see routes/webhook.js's checkWebhookSecret),
+#                     since TradingView alert bodies can't carry a custom
+#                     Authorization header, only a fixed JSON body. Generate
+#                     with: openssl rand -hex 32
+#                       wrangler secret put WEBHOOK_SECRET
+#   WEBHOOK_SECRET_ENFORCED - rollout flag for the above, kept as a Secret
+#                     (not a [vars] entry) specifically so it can be flipped
+#                     without a code deploy. Unset/"false": a missing/wrong
+#                     "secret" only logs a warning to activity_log and the
+#                     webhook still processes normally (no signal loss while
+#                     TradingView alerts are being migrated to include
+#                     "secret"). "true": a missing/wrong "secret" gets a 401
+#                     and the request is dropped before any DB write. Set
+#                     only after every alert has been updated:
+#                       wrangler secret put WEBHOOK_SECRET_ENFORCED
+#                     (enter "true" when prompted)

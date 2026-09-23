@@ -5,21 +5,23 @@
 // in the payload, so a misconfigured payload can never get silently routed
 // to the wrong strategy's gate logic.
 //
-// No real TradingView alerts point at this yet — that wiring is a separate,
-// later step. This just needs to be a working, testable endpoint: POST a
-// signal payload (symbol, direction, price, and whatever indicator fields
-// that strategy's factor checks read — rsi, ema200, etc.) to
-// /webhook/<strategy-id> (any id from worker/schema.sql's strategies table,
-// base or "(SL)" variant, e.g. /webhook/crypto_baseline or
-// /webhook/crypto_baseline_sl) and get back the AND-gate result.
+// Real production traffic now hits this endpoint (confirmed via activity_log/
+// trades — organic 5-minute-aligned timestamps, this worker's own
+// /webhook/<strategy_id> URL scheme). POST a signal payload (symbol,
+// direction, price, and whatever indicator fields that strategy's factor
+// checks read — rsi, ema200, etc.) to /webhook/<strategy-id> (any id from
+// worker/schema.sql's strategies table, base or "(SL)" variant, e.g.
+// /webhook/crypto_baseline or /webhook/crypto_baseline_sl) and get back the
+// AND-gate result.
 //
-// Every call is recorded in activity_log (source/result), same as
-// WAVESCOUT's webhook_log — so the Log page sees it live. A passing signal
-// is stored in `signals` (status='converted') and immediately opens a
-// `trades` row; a failing signal is still stored in `signals`
-// (status='rejected', with the matched/failed factor list) but no trade is
-// created — WAVESCOUT's skip/reject pattern, just using this schema's
-// existing signals.status enum instead of a separate skip log.
+// Every call is recorded in activity_log (source/result, plus the caller's
+// User-Agent/CF-Connecting-IP — see logActivity below), same as WAVESCOUT's
+// webhook_log — so the Log page sees it live. A passing signal is stored in
+// `signals` (status='converted') and immediately opens a `trades` row; a
+// failing signal is still stored in `signals` (status='rejected', with the
+// matched/failed factor list) but no trade is created — WAVESCOUT's
+// skip/reject pattern, just using this schema's existing signals.status enum
+// instead of a separate skip log.
 import { evaluateSignal, getStrategy } from '../strategies/index.js';
 import { DEFAULT_EXIT } from '../strategies/shared.js';
 
@@ -42,12 +44,52 @@ function makeId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function logActivity(env, source, message) {
+// `request` is optional (callers outside webhook.js that still use the old
+// 3-arg form keep working) but every webhook call site below now passes it,
+// so User-Agent/CF-Connecting-IP land on every webhook-triggered log row —
+// "damit die Herkunft nachvollziehbar ist", not just on secret rejections.
+async function logActivity(env, source, message, request) {
+  const userAgent = request?.headers.get('User-Agent') ?? null;
+  const sourceIp = request?.headers.get('CF-Connecting-IP') ?? null;
   await env.DB.prepare(
-    `INSERT INTO activity_log (id, source, message, timestamp, related_trade_id) VALUES (?, ?, ?, ?, NULL)`
+    `INSERT INTO activity_log (id, source, message, timestamp, related_trade_id, user_agent, source_ip) VALUES (?, ?, ?, ?, NULL, ?, ?)`
   )
-    .bind(makeId('log'), source, message, nowSql())
+    .bind(makeId('log'), source, message, nowSql(), userAgent, sourceIp)
     .run();
+}
+
+// Constant-time byte comparison — Workers' crypto.subtle has no built-in
+// timingSafeEqual (unlike Node's crypto module, which isn't available here
+// either), so this is hand-rolled: XOR-accumulate every byte pair rather
+// than short-circuiting on the first mismatch, so a wrong secret's
+// rejection takes the same time regardless of how many leading bytes
+// happened to match. A length mismatch returns false immediately — leaking
+// the secret's length isn't a meaningful risk (it's a fixed, documented
+// format, e.g. `openssl rand -hex 32`), and comparing byte-by-byte against
+// a wrong-length buffer would need padding logic that adds complexity for
+// no real timing-safety benefit.
+function timingSafeEqual(a, b) {
+  const bytesA = new TextEncoder().encode(a);
+  const bytesB = new TextEncoder().encode(b);
+  if (bytesA.length !== bytesB.length) return false;
+  let diff = 0;
+  for (let i = 0; i < bytesA.length; i++) {
+    diff |= bytesA[i] ^ bytesB[i];
+  }
+  return diff === 0;
+}
+
+// Payload-field secret check (TradingView alert bodies can't carry custom
+// headers, only a fixed JSON body — see index.js's old ?secret= comment,
+// replaced by this). No WEBHOOK_SECRET configured -> nothing to check,
+// always ok (matches today's unauthenticated behavior). Never logs the
+// submitted value itself, only whether one was present.
+function checkWebhookSecret(payload, env) {
+  if (!env.WEBHOOK_SECRET) return { ok: true };
+  const submitted = payload?.secret;
+  if (typeof submitted !== 'string' || !submitted) return { ok: false, reason: 'Secret fehlt' };
+  if (!timingSafeEqual(submitted, env.WEBHOOK_SECRET)) return { ok: false, reason: 'falsches Secret' };
+  return { ok: true };
 }
 
 // Builds the {id, sl, tp} bracket for one strategy variant's exit config,
@@ -72,9 +114,31 @@ async function processWebhook(request, env, strategyKey) {
     return Response.json({ error: 'invalid_json' }, { status: 400 });
   }
 
+  // Secret check runs before any DB write — a rejected/unrecognized request
+  // still gets exactly one log row (below) documenting why, but never opens
+  // a signal or trade. WEBHOOK_SECRET_ENFORCED gates whether a bad/missing
+  // secret actually blocks the request (401) or only logs a warning and lets
+  // processing continue — see wrangler.toml's rollout comment: this lets
+  // every existing TradingView alert keep firing while they're migrated to
+  // include "secret", instead of losing signals the moment WEBHOOK_SECRET is
+  // set.
+  const secretCheck = checkWebhookSecret(payload, env);
+  if (!secretCheck.ok) {
+    const enforced = env.WEBHOOK_SECRET_ENFORCED === 'true';
+    await logActivity(
+      env,
+      'system',
+      `Webhook /webhook/${strategyKey}: ${enforced ? 'abgelehnt' : 'Warnung'} — ${secretCheck.reason}`,
+      request
+    );
+    if (enforced) {
+      return Response.json({ error: 'unauthorized' }, { status: 401 });
+    }
+  }
+
   const strategy = getStrategy(strategyKey);
   if (!strategy) {
-    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: unbekannte Strategie`);
+    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: unbekannte Strategie`, request);
     return Response.json({ error: 'unknown_strategy', strategyKey }, { status: 404 });
   }
 
@@ -94,13 +158,13 @@ async function processWebhook(request, env, strategyKey) {
 
   const direction = String(payload?.direction ?? '').toLowerCase();
   if (direction !== 'long' && direction !== 'short') {
-    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlende oder ungültige direction`);
+    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlende oder ungültige direction`, request);
     return Response.json({ error: 'invalid_direction', message: 'expected direction: "long" or "short"' }, { status: 400 });
   }
 
   const symbol = String(payload?.symbol ?? '').toUpperCase();
   if (!symbol) {
-    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlendes symbol`);
+    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlendes symbol`, request);
     return Response.json({ error: 'missing_symbol' }, { status: 400 });
   }
 
@@ -133,7 +197,8 @@ async function processWebhook(request, env, strategyKey) {
     await logActivity(
       env,
       'system',
-      `Webhook /webhook/${strategyKey} ${symbol}: Signal abgelehnt (fehlgeschlagen: ${failed.join(', ') || 'unbekannt'})`
+      `Webhook /webhook/${strategyKey} ${symbol}: Signal abgelehnt (fehlgeschlagen: ${failed.join(', ') || 'unbekannt'})`,
+      request
     );
     return Response.json({
       data: { passed: false, strategyKey, symbol, signalId, matched, failed },
@@ -163,7 +228,8 @@ async function processWebhook(request, env, strategyKey) {
     await logActivity(
       env,
       'system',
-      `Webhook /webhook/${strategyKey} ${symbol}: Signal bestätigt, aber kein gültiger Preis im Payload → kein Trade`
+      `Webhook /webhook/${strategyKey} ${symbol}: Signal bestätigt, aber kein gültiger Preis im Payload → kein Trade`,
+      request
     );
     return Response.json({
       data: {
@@ -202,7 +268,8 @@ async function processWebhook(request, env, strategyKey) {
   await logActivity(
     env,
     'binance',
-    `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (fixed)`
+    `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (fixed)`,
+    request
   );
 
   let pairedTrade = null;
@@ -219,7 +286,8 @@ async function processWebhook(request, env, strategyKey) {
     await logActivity(
       env,
       'binance',
-      `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (paired ${slKey}, trailing)`
+      `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (paired ${slKey}, trailing)`,
+      request
     );
 
     pairedTrade = await env.DB.prepare('SELECT * FROM trades WHERE id = ?').bind(pairedTradeId).first();

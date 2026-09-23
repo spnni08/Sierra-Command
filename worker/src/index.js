@@ -39,20 +39,14 @@ export default {
     // /webhook/<strategy> is called by an external signal source (TradingView
     // alerts), never by the frontend, so it can't carry the frontend's
     // Authorization bearer token — TradingView alert bodies only support a
-    // fixed text payload, no custom headers. If WEBHOOK_SECRET is configured
-    // (`wrangler secret put WEBHOOK_SECRET`), require it as a `?secret=`
-    // query param, matching how TradingView alert URLs are configured
-    // (URL + static JSON body, no headers). Left unauthenticated when unset,
-    // same as today — see routes/webhook.js's top comment: no real
-    // TradingView alerts point at this yet, so there's nothing this would
-    // protect against before that wiring exists, and hardening it further can
-    // wait until it does.
-    if (url.pathname.startsWith('/webhook') && env.WEBHOOK_SECRET) {
-      if (url.searchParams.get('secret') !== env.WEBHOOK_SECRET) {
-        return withCors(unauthorized(), request, env);
-      }
-    }
-
+    // fixed JSON body, no custom headers or query-param configuration beyond
+    // the URL itself. The secret check therefore lives inside
+    // routes/webhook.js's checkWebhookSecret (a "secret" field read from the
+    // JSON payload, timing-safe compared against WEBHOOK_SECRET), not here —
+    // it needs to run after the payload is parsed, and needs
+    // WEBHOOK_SECRET_ENFORCED to decide warn-only vs. hard-401, both of which
+    // are payload/route-specific concerns this top-level dispatcher doesn't
+    // otherwise have.
     try {
       if (url.pathname === '/health') {
         response = Response.json({ status: 'ok', service: 'sierra-command-worker' });

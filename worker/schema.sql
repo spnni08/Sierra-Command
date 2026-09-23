@@ -219,7 +219,16 @@ CREATE TABLE IF NOT EXISTS activity_log (
   source TEXT NOT NULL CHECK (source IN ('system','binance','oanda')),
   message TEXT NOT NULL,
   timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-  related_trade_id TEXT REFERENCES trades(id)
+  related_trade_id TEXT REFERENCES trades(id),
+  -- Caller identity for every row routes/webhook.js writes (both accepted
+  -- and rejected calls) — 'damit die Herkunft nachvollziehbar ist': lets a
+  -- rejected/unrecognized webhook call be traced back to TradingView vs. an
+  -- unexpected sender without ever storing the submitted secret value
+  -- itself. NULL for every row written by something other than a webhook
+  -- call (existing rows, and this app's own auto-trade/simulation logging),
+  -- since there's no inbound request to read headers from there.
+  user_agent TEXT,
+  source_ip TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_activity_log_source ON activity_log(source);
 CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp);

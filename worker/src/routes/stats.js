@@ -14,6 +14,14 @@ const SOURCE_GROUPS = {
   live: ['binance_live', 'oanda_live'],
 };
 
+// The 3 crypto symbols whose backtest daily candles come from CoinGecko's
+// synthetic flat-OHLC /market_chart endpoint (open=high=low=close) rather
+// than real intraday-aggregated OHLC — see backtest/candles.js. Forex/index
+// daily candles (Twelve Data) are real OHLC and are deliberately NOT
+// flagged here, even though they're also '1d' — different data quality,
+// different claim.
+const CRYPTO_SYMBOLS = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+
 function nowSql() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
@@ -106,12 +114,19 @@ async function strategiesRoute(url, env) {
     }
 
     const rows = strategies.map((s) => {
-      const stats = computeStrategyStatsRow(byStrategy.get(s.id) ?? []);
+      const strategyTrades = byStrategy.get(s.id) ?? [];
+      const stats = computeStrategyStatsRow(strategyTrades);
       return {
         strategyId: s.id,
         name: s.name,
         active: !!s.active,
         openCount: openCounts.get(s.id) ?? 0,
+        // Only meaningful for backtest results — live/demo trades were
+        // never simulated on any candle source at all. See CRYPTO_SYMBOLS
+        // above for exactly which (symbol, timeframe) combination this
+        // flags.
+        hasSyntheticDailyCandles:
+          source === 'backtest' && strategyTrades.some((t) => t.timeframe === '1d' && CRYPTO_SYMBOLS.has(t.symbol)),
         ...stats,
       };
     });

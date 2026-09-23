@@ -199,6 +199,49 @@ describe('handleStatsRoute GET /stats/strategies', () => {
     expect(data.rows[0].pnlTotalUsd).toBeCloseTo(20, 10);
   });
 
+  it('flags hasSyntheticDailyCandles only for backtest results on a crypto symbol at the 1d timeframe', async () => {
+    const strategies = [
+      { id: 'strat-crypto', name: 'Crypto Strategy', active: 1 },
+      { id: 'strat-forex', name: 'Forex Strategy', active: 1 },
+    ];
+    const tradeRows = [
+      // Crypto + 1d -> synthetic flat-OHLC daily candle -> flagged.
+      { strategy_id: 'strat-crypto', symbol: 'BTCUSDT', timeframe: '1d', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 50, reason: 'tp', opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 00:00:00' },
+      // Forex + 1d -> real Twelve Data OHLC -> NOT flagged, different data quality.
+      { strategy_id: 'strat-forex', symbol: 'EURUSD', timeframe: '1d', direction: 'long', entry: 1.1, sl: 1.09, tp: 1.12, exit_price: 1.11, pnl: 5, reason: 'tp', opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 00:00:00' },
+    ];
+    const env = { DB: createFakeDb({ strategies, tradeRows }) };
+    const url = new URL('https://worker.example/stats/strategies?source=backtest');
+    const res = await handleStatsRoute(new Request(url), url, env);
+    const { data } = await res.json();
+
+    expect(data.rows.find((r) => r.strategyId === 'strat-crypto').hasSyntheticDailyCandles).toBe(true);
+    expect(data.rows.find((r) => r.strategyId === 'strat-forex').hasSyntheticDailyCandles).toBe(false);
+  });
+
+  it('does not flag a crypto symbol on a non-1d timeframe, or any live/demo source', async () => {
+    const strategies = [{ id: 'strat-crypto', name: 'Crypto Strategy', active: 1 }];
+    const intradayRows = [
+      { strategy_id: 'strat-crypto', symbol: 'BTCUSDT', timeframe: '4h', direction: 'long', entry: 100, sl: 90, tp: 120, exit_price: 110, pnl: 50, reason: 'tp', opened_at: '2026-01-01 00:00:00', closed_at: '2026-01-01 00:00:00' },
+    ];
+    const envBacktest = { DB: createFakeDb({ strategies, tradeRows: intradayRows }) };
+    const urlBacktest = new URL('https://worker.example/stats/strategies?source=backtest');
+    const resBacktest = await handleStatsRoute(new Request(urlBacktest), urlBacktest, envBacktest);
+    const { data: dataBacktest } = await resBacktest.json();
+    expect(dataBacktest.rows[0].hasSyntheticDailyCandles).toBe(false);
+
+    // Same (symbol, timeframe) shape, but a live source -> never flagged
+    // (live trades were never simulated on any candle source at all).
+    const dailyRows = [
+      { strategy_id: 'strat-crypto', symbol: 'BTCUSDT', timeframe: '1d', direction: 'long', entry: 100, sl: 90, tp: 120, pnl: 50, volume: 5, closed_at: '2026-01-01 00:00:00' },
+    ];
+    const envLive = { DB: createFakeDb({ strategies, tradeRows: dailyRows }) };
+    const urlLive = new URL('https://worker.example/stats/strategies?source=live');
+    const resLive = await handleStatsRoute(new Request(urlLive), urlLive, envLive);
+    const { data: dataLive } = await resLive.json();
+    expect(dataLive.rows[0].hasSyntheticDailyCandles).toBe(false);
+  });
+
   it('404s on an unknown /stats path', async () => {
     const env = { DB: createFakeDb({ strategies: STRATEGIES }) };
     const url = new URL('https://worker.example/stats/nope');
