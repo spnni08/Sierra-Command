@@ -9,6 +9,7 @@
 // route open.
 
 import { signSettingsSession, signAppSession, hashPassword } from '../auth.js';
+import { berlinDayRangeUtc, berlinMonthRangeUtc, berlinDateParts, berlinDayOfMonth, isValidDateStr } from '../lib/berlinDay.js';
 
 export async function handleApiRoute(request, url, env) {
   const path = url.pathname.replace(/^\/api/, '');
@@ -191,19 +192,40 @@ async function getStrategies(env) {
 // trade with no signal_id (or a signal whose strategy was since removed)
 // still comes back, just with strategy_id/strategy_name null rather than
 // dropping the row.
+// ?status= and ?date= are independent, AND-combined filters. ?date= (a
+// Europe/Berlin calendar date, 'YYYY-MM-DD') matches a trade that was
+// opened OR closed on that day — not "was open at some point during that
+// day" (which would resurface a days-old still-open trade on every
+// intervening day's log). A trade opened on day N and closed on day N+1
+// deliberately shows up under both days: both are real events belonging to
+// their respective day's log.
 async function getTrades(url, env) {
   try {
     const status = url.searchParams.get('status');
+    const date = url.searchParams.get('date');
     const base = `SELECT t.*, s.strategy_id as strategy_id, st.name as strategy_name
        FROM trades t
        LEFT JOIN signals s ON s.id = t.signal_id
        LEFT JOIN strategies st ON st.id = s.strategy_id`;
-    let stmt;
+
+    const clauses = [];
+    const params = [];
     if (status === 'open' || status === 'closed') {
-      stmt = env.DB.prepare(`${base} WHERE t.status = ? ORDER BY t.opened_at DESC`).bind(status);
-    } else {
-      stmt = env.DB.prepare(`${base} ORDER BY t.opened_at DESC`);
+      clauses.push('t.status = ?');
+      params.push(status);
     }
+    if (date && isValidDateStr(date)) {
+      const { startUtc, endUtc } = berlinDayRangeUtc(date);
+      clauses.push(
+        '((t.opened_at >= ? AND t.opened_at < ?) OR (t.closed_at IS NOT NULL AND t.closed_at >= ? AND t.closed_at < ?))'
+      );
+      params.push(startUtc, endUtc, startUtc, endUtc);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const stmt = params.length
+      ? env.DB.prepare(`${base} ${where} ORDER BY t.opened_at DESC`).bind(...params)
+      : env.DB.prepare(`${base} ORDER BY t.opened_at DESC`);
     const { results } = await stmt.all();
     return Response.json({ data: results });
   } catch (err) {
@@ -211,9 +233,16 @@ async function getTrades(url, env) {
   }
 }
 
+// ?source= and ?date= are independent, AND-combined filters, same
+// convention as getTrades. The 200-row LIMIT only applies to the
+// unfiltered/no-date case (its original purpose — a sane cap on the
+// "everything" view); a single Europe/Berlin day's worth of activity is
+// never realistically going to hit that, and the day-filtered view is
+// meant to show ALL of that day's entries, not a truncated slice.
 async function getActivityLog(url, env) {
   try {
     const source = url.searchParams.get('source');
+    const date = url.searchParams.get('date');
     const LIMIT = 200;
     // Same strategy join as getTrades, via activity_log.related_trade_id.
     // System-source rows (no related trade) come back with strategy_name
@@ -223,14 +252,24 @@ async function getActivityLog(url, env) {
        LEFT JOIN trades t ON t.id = a.related_trade_id
        LEFT JOIN signals s ON s.id = t.signal_id
        LEFT JOIN strategies st ON st.id = s.strategy_id`;
-    let stmt;
+
+    const clauses = [];
+    const params = [];
     if (source === 'system' || source === 'binance' || source === 'oanda') {
-      stmt = env.DB.prepare(
-        `${base} WHERE a.source = ? ORDER BY a.timestamp DESC LIMIT ?`
-      ).bind(source, LIMIT);
-    } else {
-      stmt = env.DB.prepare(`${base} ORDER BY a.timestamp DESC LIMIT ?`).bind(LIMIT);
+      clauses.push('a.source = ?');
+      params.push(source);
     }
+    const hasDateFilter = !!(date && isValidDateStr(date));
+    if (hasDateFilter) {
+      const { startUtc, endUtc } = berlinDayRangeUtc(date);
+      clauses.push('a.timestamp >= ? AND a.timestamp < ?');
+      params.push(startUtc, endUtc);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limitClause = hasDateFilter ? '' : 'LIMIT ?';
+    if (!hasDateFilter) params.push(LIMIT);
+    const stmt = env.DB.prepare(`${base} ${where} ORDER BY a.timestamp DESC ${limitClause}`).bind(...params);
     const { results } = await stmt.all();
     return Response.json({ data: results });
   } catch (err) {
@@ -374,31 +413,35 @@ async function patchStrategy(request, env, strategyId) {
 }
 
 // Daily PnL grouped by source (mt5 = oanda_*, exchange = binance_*), for the
-// Log page's calendar. `year`/`month` default to the current UTC month.
+// Log page's calendar. `year`/`month` default to the current Europe/Berlin
+// month. Bucketing is done in JS (berlinDayOfMonth), not SQL strftime —
+// SQLite has no IANA timezone database and can't correctly account for the
+// CET/CEST DST transition, only fixed offsets (which would be wrong half
+// the year). This MUST bucket the same way getTrades'/getActivityLog's
+// ?date= filter does, or a day's calendar total and its filtered trade list
+// (via LogPage's day click) would disagree.
 async function getPnlCalendar(url, env) {
   try {
-    const now = new Date();
-    const year = parseInt(url.searchParams.get('year'), 10) || now.getUTCFullYear();
-    const month = parseInt(url.searchParams.get('month'), 10) || now.getUTCMonth() + 1;
-    const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+    const todayBerlin = berlinDateParts();
+    const year = parseInt(url.searchParams.get('year'), 10) || todayBerlin.year;
+    const month = parseInt(url.searchParams.get('month'), 10) || todayBerlin.month;
+    const { startUtc, endUtc } = berlinMonthRangeUtc(year, month);
 
     const { results } = await env.DB.prepare(
-      `SELECT
-         CAST(strftime('%d', closed_at) AS INTEGER) as day,
-         CASE WHEN source LIKE 'oanda%' THEN 'mt5' ELSE 'exchange' END as src_group,
-         SUM(pnl) as total
+      `SELECT closed_at, source, pnl
        FROM trades
-       WHERE status = 'closed' AND closed_at IS NOT NULL AND strftime('%Y-%m', closed_at) = ?
-       GROUP BY day, src_group`
+       WHERE status = 'closed' AND closed_at IS NOT NULL AND closed_at >= ? AND closed_at < ?`
     )
-      .bind(yearMonth)
+      .bind(startUtc, endUtc)
       .all();
 
     const days = {};
     for (const row of results) {
-      const day = days[row.day] ?? (days[row.day] = { mt5: 0, exch: 0 });
-      if (row.src_group === 'mt5') day.mt5 = row.total;
-      else day.exch = row.total;
+      const day = berlinDayOfMonth(row.closed_at);
+      const bucket = days[day] ?? (days[day] = { mt5: 0, exch: 0 });
+      const group = String(row.source ?? '').startsWith('oanda') ? 'mt5' : 'exchange';
+      if (group === 'mt5') bucket.mt5 += row.pnl ?? 0;
+      else bucket.exch += row.pnl ?? 0;
     }
     for (const day of Object.values(days)) {
       day.total = day.mt5 + day.exch;

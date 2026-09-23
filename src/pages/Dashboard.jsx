@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { fetchTrades, fetchStrategies, fetchBacktestRuns, fetchPnlCalendar } from '../api/client';
+import { berlinDateParts } from '../lib/berlinDay';
 import { useFetch } from '../api/useFetch';
 import StatusPanel from '../api/StatusPanel';
 import { StrategyStatsHeaderRow, StrategyStatsRow } from '../components/StrategyStatsTable';
@@ -192,9 +193,13 @@ export default function Dashboard({ goAutoSettings, goLog }) {
   const todayStats = useMemo(() => {
     const cal = pnlCalendarQ.data;
     if (!cal) return null;
-    const now = new Date();
-    if (cal.year !== now.getUTCFullYear() || cal.month !== now.getUTCMonth() + 1) return null;
-    return cal.days?.[String(now.getUTCDate())] ?? { mt5: 0, exch: 0, total: 0 };
+    // /api/pnl-calendar buckets by Europe/Berlin calendar day (see
+    // worker/src/routes/api.js's getPnlCalendar) — must look up "today"
+    // the same way, or this disagrees with the real bucket during the
+    // ~1-2h window around midnight Berlin time.
+    const { year, month, day } = berlinDateParts();
+    if (cal.year !== year || cal.month !== month) return null;
+    return cal.days?.[String(day)] ?? { mt5: 0, exch: 0, total: 0 };
   }, [pnlCalendarQ.data]);
   const monthPnlBySource = useMemo(() => {
     const cal = pnlCalendarQ.data;

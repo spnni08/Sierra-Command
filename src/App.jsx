@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import TradeNotificationsProvider from './context/TradeNotificationsProvider';
 import Header from './components/Header';
@@ -16,7 +16,24 @@ import LoginGate from './components/LoginGate';
 
 function Shell() {
   const { theme } = useApp();
-  const [page, setPage] = useState('dash');
+  // A direct link/reload with ?date= (from LogPage's calendar day filter —
+  // see LogPage.jsx's applyDateFilter) should land on the Log page itself,
+  // not the Dashboard default, so the filtered view is actually reachable
+  // by URL. Read once at mount; LogPage owns re-reading/writing `date` for
+  // the rest of its lifetime (see its own popstate listener).
+  const [page, setPage] = useState(() =>
+    new URLSearchParams(window.location.search).get('date') ? 'log' : 'dash'
+  );
+
+  // Leaving the Log page via the header nav (not via LogPage's own "Filter
+  // entfernen") would otherwise strand a stale ?date= in the URL bar —
+  // strip it so navigating to Dashboard/ProTerminal/etc. doesn't carry a
+  // filter param that page doesn't understand.
+  useEffect(() => {
+    if (page !== 'log' && window.location.search) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, [page]);
 
   return (
     <div
