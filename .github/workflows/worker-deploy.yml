@@ -153,6 +153,21 @@ jobs:
           else
             echo "backtest_trades.timeframe already present — skipping."
           fi
+
+          echo "Probing activity_log.user_agent..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT user_agent FROM activity_log LIMIT 1" >/tmp/probe_activity_log_ua.log 2>&1
+          ACTIVITY_LOG_UA_PROBE=$?
+          set -e
+          if [ $ACTIVITY_LOG_UA_PROBE -ne 0 ]; then
+            echo "activity_log.user_agent/source_ip missing — adding them (plain ADD COLUMN, nullable, no rebuild needed)."
+            npx wrangler d1 execute sierra-command-db --remote --command "
+              ALTER TABLE activity_log ADD COLUMN user_agent TEXT;
+              ALTER TABLE activity_log ADD COLUMN source_ip TEXT;
+            "
+          else
+            echo "activity_log.user_agent already present — skipping."
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # ict_sweep_mss/_sl's default logic-threshold overrides — deliberately

@@ -13,6 +13,17 @@ const TRADES_LIMIT = 50;
 // bestCombo won't consider it.
 const MATRIX_MIN_TRADES = 10;
 
+// Same set + wording as worker/src/routes/stats.js's CRYPTO_SYMBOLS /
+// Auswertung.jsx's SYNTHETIC_CANDLE_TOOLTIP — duplicated for the same
+// reason as MATRIX_MIN_TRADES above (no cross-import between worker/ and
+// src/, and StrategyDetailModal can't import from Auswertung.jsx since that
+// file already imports this one). Computed here from byAssetTimeframe
+// (always the full source/range-filtered set, unlike trades.rows which can
+// be narrowed by the Asset/Timeframe filters in the "Alle Trades" tab) so
+// no backend change is needed.
+const SYNTHETIC_CANDLE_SYMBOLS = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+const SYNTHETIC_CANDLE_TOOLTIP = 'Backtest auf Tageskerzen ohne Intraday-Daten – nicht repräsentativ für Live-Timeframe';
+
 const REASON_LABEL = { sl: 'SL', tp: 'TP', signal: 'Signal', period_end: 'Ende Zeitraum' };
 function fmtReason(reason) {
   return REASON_LABEL[reason] ?? 'unbekannt';
@@ -321,6 +332,9 @@ export default function StrategyDetailModal({ strategyId, strategyName, source, 
   const detailQ = useFetch(loadDetail, [loadDetail]);
   const detail = detailQ.data;
   const name = detail?.name ?? strategyName ?? strategyId;
+  const hasSyntheticDailyCandles =
+    source === 'backtest' &&
+    !!detail?.byAssetTimeframe.some((c) => c.timeframe === '1d' && SYNTHETIC_CANDLE_SYMBOLS.has(c.symbol));
 
   return (
     <div
@@ -344,6 +358,12 @@ export default function StrategyDetailModal({ strategyId, strategyName, source, 
 
         {detail && (
           <>
+            {hasSyntheticDailyCandles && (
+              <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>⚠</span>
+                <span>{SYNTHETIC_CANDLE_TOOLTIP}</span>
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--line)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>
               <div><div style={{ color: 'var(--txt3)' }}>TRADES</div><div style={{ color: 'var(--txt)' }}>{fmtInt(detail.overall.tradeCount)}</div></div>
               <div><div style={{ color: 'var(--txt3)' }}>PNL</div><div style={{ color: 'var(--txt)' }}>{fmtUsd(detail.overall.pnlTotalUsd)}</div></div>

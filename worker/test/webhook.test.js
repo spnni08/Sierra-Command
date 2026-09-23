@@ -170,3 +170,112 @@ describe('webhook fan-out to paired _sl trade', () => {
     expect(env.tables.trades).toHaveLength(0);
   });
 });
+
+describe('webhook secret check', () => {
+  it('with WEBHOOK_SECRET set but WEBHOOK_SECRET_ENFORCED unset, a missing secret only logs a warning and still processes the webhook', async () => {
+    const env = makeEnv();
+    const res = await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        body: JSON.stringify(baselineLongPayload), // no "secret" field
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB, WEBHOOK_SECRET: 'correct-secret' }
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.passed).toBe(true);
+    expect(env.tables.trades).toHaveLength(2); // fan-out still ran, no signal lost
+    expect(env.tables.activity_log[0].message).toContain('Warnung');
+    expect(env.tables.activity_log[0].message).toContain('Secret fehlt');
+  });
+
+  it('with WEBHOOK_SECRET_ENFORCED=true, a missing secret is rejected with 401 and no signal/trade is written', async () => {
+    const env = makeEnv();
+    const res = await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        body: JSON.stringify(baselineLongPayload),
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB, WEBHOOK_SECRET: 'correct-secret', WEBHOOK_SECRET_ENFORCED: 'true' }
+    );
+
+    expect(res.status).toBe(401);
+    expect(env.tables.signals).toHaveLength(0);
+    expect(env.tables.trades).toHaveLength(0);
+    expect(env.tables.activity_log).toHaveLength(1);
+    expect(env.tables.activity_log[0].message).toContain('abgelehnt');
+  });
+
+  it('with WEBHOOK_SECRET_ENFORCED=true, a wrong secret is rejected with 401', async () => {
+    const env = makeEnv();
+    const res = await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        body: JSON.stringify({ ...baselineLongPayload, secret: 'wrong-value' }),
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB, WEBHOOK_SECRET: 'correct-secret', WEBHOOK_SECRET_ENFORCED: 'true' }
+    );
+
+    expect(res.status).toBe(401);
+    expect(env.tables.trades).toHaveLength(0);
+    // The submitted (wrong) secret value itself must never be logged.
+    expect(env.tables.activity_log[0].message).not.toContain('wrong-value');
+    expect(env.tables.activity_log[0].message).toContain('falsches Secret');
+  });
+
+  it('with WEBHOOK_SECRET_ENFORCED=true, the correct secret is accepted and the webhook processes normally', async () => {
+    const env = makeEnv();
+    const res = await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        body: JSON.stringify({ ...baselineLongPayload, secret: 'correct-secret' }),
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB, WEBHOOK_SECRET: 'correct-secret', WEBHOOK_SECRET_ENFORCED: 'true' }
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.passed).toBe(true);
+    expect(env.tables.trades).toHaveLength(2);
+    expect(env.tables.activity_log.some((r) => /abgelehnt|Warnung/.test(r.message))).toBe(false);
+  });
+
+  it('with no WEBHOOK_SECRET configured, requests are accepted exactly as before (no secret concept at all)', async () => {
+    const env = makeEnv();
+    const res = await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        body: JSON.stringify(baselineLongPayload),
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB }
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.passed).toBe(true);
+    expect(env.tables.activity_log.some((r) => /abgelehnt|Warnung/.test(r.message))).toBe(false);
+  });
+
+  it('records the caller\'s User-Agent and CF-Connecting-IP on every webhook-triggered log row', async () => {
+    const env = makeEnv();
+    await handleWebhookRoute(
+      new Request('https://worker.test/webhook/crypto_baseline', {
+        method: 'POST',
+        headers: { 'User-Agent': 'TradingView-Webhook', 'CF-Connecting-IP': '203.0.113.42' },
+        body: JSON.stringify(baselineLongPayload),
+      }),
+      new URL('https://worker.test/webhook/crypto_baseline'),
+      { DB: env.DB }
+    );
+
+    expect(env.tables.activity_log.length).toBeGreaterThan(0);
+    expect(env.tables.activity_log[0].user_agent).toBe('TradingView-Webhook');
+    expect(env.tables.activity_log[0].source_ip).toBe('203.0.113.42');
+  });
+});
