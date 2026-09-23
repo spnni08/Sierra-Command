@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchStrategies, fetchStrategyStats } from '../api/client';
 import { useFetch } from '../api/useFetch';
 import { todayBerlinDateStr } from '../lib/berlinDay';
+import { fmtUsd, fmtPct, fmtR, fmtRatio, fmtInt, fmtBerlinDateTime, REASON, compareByField, segBtn } from '../lib/statsFormat';
 import StatusPanel from '../api/StatusPanel';
+import StrategyDetailModal from '../components/StrategyDetailModal';
 
 // Every symbol this app's backtest/live/demo pipeline actually knows about
 // (worker/src/backtest/candles.js's assetClassFor / worker/src/backtest/
@@ -24,60 +26,6 @@ const RANGE_OPTIONS = [
   { key: 'custom', label: 'Eigener Zeitraum' },
 ];
 
-function segBtn(active, first) {
-  return {
-    padding: '4px 10px', borderLeft: first ? undefined : 0, cursor: 'pointer', fontFamily: 'inherit',
-    border: `1px solid ${active ? 'var(--acc)' : 'var(--line2)'}`,
-    background: active ? 'var(--acc)' : 'transparent',
-    color: active ? '#fff' : 'var(--txt2)',
-  };
-}
-
-// PnL/expectancy in USD — deliberately never colored green/red anywhere on
-// this page (table or cards): sign is conveyed by the +/− prefix alone, per
-// the explicit "Winrate und PnL nicht grün/rot" design rule.
-function fmtUsd(v, dec = 2) {
-  if (v === null || v === undefined) return '–';
-  const s = Math.abs(v).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-  return (v >= 0 ? '+' : '−') + s + ' $';
-}
-function fmtPct(v, dec = 1) {
-  if (v === null || v === undefined) return '–';
-  return (v * 100).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + ' %';
-}
-// Signed R-multiple (realized RR, PnL-in-R, expectancy-in-R).
-function fmtR(v, dec = 2) {
-  if (v === null || v === undefined) return '–';
-  const s = Math.abs(v).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-  return (v >= 0 ? '+' : '−') + s + 'R';
-}
-// Unsigned ratio (planned RR — always a positive |TP-distance|/|SL-distance|).
-function fmtRatio(v, dec = 2) {
-  if (v === null || v === undefined) return '–';
-  return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + 'R';
-}
-function fmtInt(v) {
-  if (v === null || v === undefined) return '–';
-  return String(v);
-}
-function fmtBerlinDateTime(dbTimestamp) {
-  if (!dbTimestamp) return '–';
-  const d = new Date(dbTimestamp.replace(' ', 'T') + 'Z');
-  if (Number.isNaN(d.getTime())) return '–';
-  return new Intl.DateTimeFormat('de-DE', {
-    timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  }).format(d);
-}
-
-// Fixed explanations for a "–" cell (why the value can't be computed — never
-// estimated) and for column-header definitions.
-const REASON = {
-  winRate: 'Keine Gewinn- oder Verlust-Trades vorhanden (Breakeven zählt nicht mit).',
-  rr: 'Kein SL hinterlegt — ohne SL nicht berechenbar (wird nicht geschätzt).',
-  expectancyR: 'Nicht berechenbar: Gewinn- oder Verlust-Seite hat keine Trades mit hinterlegtem SL.',
-  lastTrade: 'Noch kein abgeschlossener Trade in diesem Zeitraum.',
-  noTrades: 'Keine geschlossenen Trades in diesem Zeitraum.',
-};
 const HEADER_TOOLTIP = {
   trades: 'Anzahl geschlossener Trades. Klein darunter: Gewinne / Verluste / Breakeven.',
   pnl: 'Summe der realisierten Ergebnisse. In R nur über Trades mit hinterlegtem SL.',
@@ -88,32 +36,6 @@ const HEADER_TOOLTIP = {
   lastTrade: 'Zeitpunkt des letzten geschlossenen Trades (Europe/Berlin).',
   open: 'Aktuell offene Trades dieser Strategie (fließen nicht in die Kennzahlen ein).',
 };
-
-const SORT_ACCESSORS = {
-  name: (r) => r.name,
-  tradeCount: (r) => r.tradeCount,
-  pnlTotalUsd: (r) => r.pnlTotalUsd,
-  winRate: (r) => r.winRate,
-  expectancyUsd: (r) => r.expectancyUsd,
-  avgPnlUsd: (r) => r.avgPnlUsd,
-  avgRealizedRR: (r) => r.avgRealizedRR,
-  lastTradeAt: (r) => r.lastTradeAt,
-  openCount: (r) => r.openCount,
-};
-
-// Nulls always sort last, regardless of direction — a "–" value has no
-// rank, so it should never masquerade as "biggest"/"smallest".
-function compareRows(a, b, key, dir) {
-  const va = SORT_ACCESSORS[key](a);
-  const vb = SORT_ACCESSORS[key](b);
-  const aNull = va === null || va === undefined;
-  const bNull = vb === null || vb === undefined;
-  if (aNull && bNull) return 0;
-  if (aNull) return 1;
-  if (bNull) return -1;
-  if (typeof va === 'string') return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-  return dir === 'asc' ? va - vb : vb - va;
-}
 
 const VIEW_KEY = 'auswertung.view';
 
@@ -167,7 +89,23 @@ function SortHeader({ label, sortKey, sort, onSort, align, tooltip }) {
 
 const GRID_COLUMNS = '1.3fr 100px 130px 90px 130px 100px 130px 150px 70px';
 
-function StatsTable({ rows, sort, onSort, rowRefs, highlightedStrategyId }) {
+function StrategyNameButton({ name, active, onClick, style }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Details anzeigen"
+      style={{
+        all: 'unset', cursor: 'pointer', color: active ? 'var(--txt)' : 'var(--txt3)',
+        textDecoration: 'underline', textDecorationColor: 'var(--line2)', textUnderlineOffset: 2,
+        ...style,
+      }}
+    >
+      {name}
+    </button>
+  );
+}
+
+function StatsTable({ rows, sort, onSort, rowRefs, highlightedStrategyId, onOpenDetail }) {
   return (
     <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, overflow: 'auto' }}>
       <div style={{ display: 'grid', gridTemplateColumns: GRID_COLUMNS, padding: '4px 12px', gap: 8, borderBottom: '1px solid var(--line)', position: 'sticky', top: 0, background: 'var(--panel)' }}>
@@ -194,7 +132,9 @@ function StatsTable({ rows, sort, onSort, rowRefs, highlightedStrategyId }) {
               transition: 'background 0.4s ease',
             }}
           >
-            <div style={{ color: row.active ? 'var(--txt)' : 'var(--txt3)' }}>{row.name}</div>
+            <div>
+              <StrategyNameButton name={row.name} active={row.active} onClick={() => onOpenDetail(row.strategyId)} />
+            </div>
 
             <div style={{ textAlign: 'right' }}>
               <div style={{ color: 'var(--txt)' }}>{fmtInt(row.tradeCount)}</div>
@@ -239,7 +179,7 @@ function InfoDot({ text }) {
   return <span title={text} style={{ color: 'var(--txt3)', cursor: 'help', fontSize: 10 }}>ⓘ</span>;
 }
 
-function StrategyCard({ row, symbolLabel, sourceLabel, onOpen }) {
+function StrategyCard({ row, symbolLabel, sourceLabel, onOpen, onOpenDetail }) {
   const path = buildSparklinePath(row.pnlSeries, 100, 28);
   const hitText = row.wins + row.losses > 0 ? `von ${row.wins + row.losses} Trades` : 'keine Trades';
   return (
@@ -252,7 +192,12 @@ function StrategyCard({ row, symbolLabel, sourceLabel, onOpen }) {
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: row.active ? 'var(--txt)' : 'var(--txt3)' }}>{row.name}</div>
+          <StrategyNameButton
+            name={row.name}
+            active={row.active}
+            onClick={(e) => { e.stopPropagation(); onOpenDetail(row.strategyId); }}
+            style={{ fontSize: 12, fontWeight: 700, display: 'block' }}
+          />
           <div style={{ fontSize: 9, color: 'var(--txt3)', marginTop: 2, fontFamily: "'IBM Plex Mono',monospace" }}>{symbolLabel}</div>
         </div>
         <div style={{ fontSize: 9, letterSpacing: '0.05em', color: 'var(--txt2)', border: '1px solid var(--line2)', padding: '2px 6px', textTransform: 'uppercase', flexShrink: 0 }}>
@@ -320,7 +265,23 @@ export default function Auswertung() {
   const [sort, setSort] = useState({ key: 'expectancyUsd', dir: 'desc' });
   const [view, setViewState] = useState(readInitialView);
   const [highlightedStrategyId, setHighlightedStrategyId] = useState(null);
+  const [openStrategyId, setOpenStrategyId] = useState(
+    () => new URLSearchParams(window.location.search).get('strategy') || null
+  );
   const rowRefs = useRef({});
+
+  const openStrategyDetail = useCallback((strategyId) => {
+    setOpenStrategyId(strategyId);
+    const url = new URL(window.location.href);
+    url.searchParams.set('strategy', strategyId);
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+  }, []);
+  const closeStrategyDetail = useCallback(() => {
+    setOpenStrategyId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('strategy');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+  }, []);
 
   const setView = useCallback((v) => {
     setViewState(v);
@@ -374,7 +335,7 @@ export default function Auswertung() {
 
   const rows = useMemo(() => statsQ.data?.rows ?? [], [statsQ.data]);
   const sortedRows = useMemo(
-    () => [...rows].sort((a, b) => compareRows(a, b, sort.key, sort.dir)),
+    () => [...rows].sort((a, b) => compareByField(a, b, sort.key, sort.dir)),
     [rows, sort]
   );
 
@@ -390,6 +351,7 @@ export default function Auswertung() {
   }, [view, highlightedStrategyId, sortedRows]);
 
   const sourceLabel = SOURCE_OPTIONS.find((o) => o.key === source)?.label ?? source;
+  const rangeLabel = RANGE_OPTIONS.find((o) => o.key === range)?.label ?? range;
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -456,7 +418,10 @@ export default function Auswertung() {
       {!statsQ.loading && !statsQ.error && rows.length > 0 && (
         <div style={{ background: 'var(--panel)', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {view === 'table' ? (
-            <StatsTable rows={sortedRows} sort={sort} onSort={handleSort} rowRefs={rowRefs} highlightedStrategyId={highlightedStrategyId} />
+            <StatsTable
+              rows={sortedRows} sort={sort} onSort={handleSort} rowRefs={rowRefs}
+              highlightedStrategyId={highlightedStrategyId} onOpenDetail={openStrategyDetail}
+            />
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10, padding: 14, overflow: 'auto' }}>
               {sortedRows.map((row) => (
@@ -466,11 +431,26 @@ export default function Auswertung() {
                   sourceLabel={sourceLabel}
                   symbolLabel={symbol || (strategyMeta.get(row.strategyId)?.asset_classes ?? []).join(' · ') || '–'}
                   onOpen={focusStrategyRow}
+                  onOpenDetail={openStrategyDetail}
                 />
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {openStrategyId && (
+        <StrategyDetailModal
+          strategyId={openStrategyId}
+          strategyName={rows.find((r) => r.strategyId === openStrategyId)?.name}
+          source={source}
+          sourceLabel={sourceLabel}
+          range={range}
+          rangeLabel={rangeLabel}
+          customFrom={customFrom}
+          customTo={customTo}
+          onClose={closeStrategyDetail}
+        />
       )}
     </div>
   );

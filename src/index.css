@@ -32,3 +32,19 @@ a:hover { color: #ff4a60; }
 
 button { font: inherit; }
 input { font: inherit; }
+
+/* StrategyDetailModal (src/components/StrategyDetailModal.jsx): desktop-
+   centered panel with a max size, full-bleed on narrow/mobile viewports —
+   the only place in this app that needs a breakpoint, so it's scoped here
+   rather than adding a general breakpoint system. */
+.strategy-detail-modal-panel {
+  width: min(920px, 94vw);
+  max-height: 88vh;
+}
+@media (max-width: 640px) {
+  .strategy-detail-modal-panel {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+  }
+}

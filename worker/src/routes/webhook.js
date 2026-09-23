@@ -104,6 +104,12 @@ async function processWebhook(request, env, strategyKey) {
     return Response.json({ error: 'missing_symbol' }, { status: 400 });
   }
 
+  // Read verbatim, never inferred — see schema.sql's trades.timeframe
+  // comment. TradingView's {{interval}} macro sends raw codes ('15','240',
+  // 'D',...); stored exactly as received, normalized only at query time
+  // (stats/computeStats.js's normalizeTimeframe), not here.
+  const timeframe = typeof payload?.timeframe === 'string' && payload.timeframe.trim() ? payload.timeframe.trim() : null;
+
   // The entry condition (the AND-gated factor chain) is identical between a
   // base strategy and its "_sl" variant — only the exit config differs (see
   // index.js's buildRegistry comment) — so one evaluate() call covers both
@@ -187,10 +193,10 @@ async function processWebhook(request, env, strategyKey) {
 
   const tradeId = makeId(`trd-${strategyKey}`);
   await env.DB.prepare(
-    `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, opened_at, closed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, NULL)`
+    `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, opened_at, closed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, NULL)`
   )
-    .bind(tradeId, signalId, symbol, direction, entry, sl, tp, volume, strategy.exit.mode, ts)
+    .bind(tradeId, signalId, symbol, direction, entry, sl, tp, volume, strategy.exit.mode, timeframe, ts)
     .run();
 
   await logActivity(
@@ -204,10 +210,10 @@ async function processWebhook(request, env, strategyKey) {
     const { sl: pairedSl, tp: pairedTp } = computeBracket(slStrategy.exit, direction, entry);
     const pairedTradeId = makeId(`trd-${slKey}`);
     await env.DB.prepare(
-      `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, opened_at, closed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, NULL)`
+      `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, opened_at, closed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, NULL)`
     )
-      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, pairedSl, pairedTp, volume, slStrategy.exit.mode, ts)
+      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, pairedSl, pairedTp, volume, slStrategy.exit.mode, timeframe, ts)
       .run();
 
     await logActivity(

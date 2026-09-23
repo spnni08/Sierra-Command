@@ -149,8 +149,9 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
   }
 
   let candles;
+  let candleTimeframe;
   try {
-    candles = await fetchHistoricalCandles(upperSymbol, fetchStart, window.end, env, strategyId);
+    ({ candles, timeframe: candleTimeframe } = await fetchHistoricalCandles(upperSymbol, fetchStart, window.end, env, strategyId));
   } catch (err) {
     return { error: 'candle_fetch_failed', message: err.message };
   }
@@ -409,8 +410,8 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
   // produce hundreds of trades over a long window.
   if (trades.length > 0) {
     const tradeInsert = env.DB.prepare(
-      `INSERT INTO backtest_trades (id, backtest_run_id, strategy_id, symbol, direction, entry, sl, tp, exit_price, pnl, reason, opened_at, closed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO backtest_trades (id, backtest_run_id, strategy_id, symbol, direction, entry, sl, tp, exit_price, pnl, reason, timeframe, opened_at, closed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     await env.DB.batch(
       trades.map((t) =>
@@ -426,6 +427,9 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
           t.exitFill,
           t.pnl,
           t.reason,
+          // The interval fetchHistoricalCandles actually used for this run
+          // (see candles.js) — always known, never NULL for a new run.
+          candleTimeframe,
           // candles[].timestamp is epoch ms (CoinGecko/Twelve Data's raw
           // format — see candles.js), not the 'YYYY-MM-DD HH:MM:SS' string
           // every other table's timestamps use. Convert here so
@@ -461,6 +465,7 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       tp: t.tp,
       reason: t.reason,
       pnl: t.pnl,
+      timeframe: candleTimeframe,
       openedAt: candles[t.openIndex]?.timestamp,
       closedAt: candles[t.exitIndex]?.timestamp,
     })),
