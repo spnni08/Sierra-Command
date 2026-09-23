@@ -93,6 +93,51 @@ CREATE TABLE IF NOT EXISTS backtest_session_breakdown (
 );
 CREATE INDEX IF NOT EXISTS idx_backtest_session_breakdown_run_id ON backtest_session_breakdown(backtest_run_id);
 
+-- One row per individual simulated trade a backtest run actually opened and
+-- closed — unlike backtest_runs (aggregate metrics only: sharpe/profit_
+-- factor/win_rate/trade_count), this is what lets /stats/strategies compute
+-- exact per-strategy expectancy/realized-RR/wins-losses-breakeven for the
+-- "Backtest" source from real numbers instead of estimating them from the
+-- aggregate. Written once per trade at the end of backtest/engine.js's
+-- runBacktest (see that file — a single env.DB.batch() call, not N
+-- sequential awaited inserts). strategy_id is denormalized from
+-- backtest_runs.strategy_id (every row here has exactly one parent run, so
+-- this never disagrees with it) purely so /stats/strategies can group by
+-- strategy without an extra JOIN on every query.
+--
+-- Every row is fully closed by construction: engine.js force-closes any
+-- position still open at the end of the simulated window (reason
+-- 'period_end') rather than ever persisting a row mid-trade, so closed_at
+-- is NOT NULL here (unlike the live `trades` table, where an open position
+-- genuinely has no closed_at yet).
+--
+-- exit_price IS the real simulated fill price (engine.js's t.exitFill) —
+-- kept explicit here because, unlike this table, the live `trades` table
+-- doesn't store a fill price at all (only pnl); scripts/lib/logic-
+-- invalidation-sql.mjs deletes this table's rows for a strategy alongside
+-- backtest_runs/backtest_session_breakdown whenever that strategy's adapter
+-- logic actually changes (children before the backtest_runs parent, same
+-- FK-ordering reason as backtest_session_breakdown already documents).
+CREATE TABLE IF NOT EXISTS backtest_trades (
+  id TEXT PRIMARY KEY,
+  backtest_run_id TEXT NOT NULL REFERENCES backtest_runs(id),
+  strategy_id TEXT NOT NULL REFERENCES strategies(id),
+  symbol TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('long','short')),
+  entry REAL NOT NULL,
+  sl REAL,
+  tp REAL,
+  exit_price REAL NOT NULL,
+  pnl REAL NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('sl','tp','signal','period_end')),
+  opened_at TEXT NOT NULL,
+  closed_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_id ON backtest_trades(backtest_run_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_strategy_id ON backtest_trades(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_closed_at ON backtest_trades(closed_at);
+
 CREATE TABLE IF NOT EXISTS strategy_settings (
   strategy_id TEXT PRIMARY KEY REFERENCES strategies(id),
   risk_per_trade_pct REAL NOT NULL DEFAULT 1.0,

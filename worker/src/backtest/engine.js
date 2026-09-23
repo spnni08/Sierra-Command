@@ -30,6 +30,13 @@ function nowSql() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+// Converts a candle's epoch-ms timestamp to the same naive-UTC
+// 'YYYY-MM-DD HH:MM:SS' string shape nowSql() produces (see this file's
+// backtest_trades INSERT for why).
+function nowSqlFrom(epochMs) {
+  return new Date(epochMs).toISOString().replace('T', ' ').slice(0, 19);
+}
+
 function makeId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -392,6 +399,43 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
     )
       .bind(id, bucket.session, bucket.trades, bucket.winRate, bucket.netPnl)
       .run();
+  }
+
+  // Individual simulated trades (see schema.sql's backtest_trades comment) —
+  // what lets /stats/strategies compute exact per-strategy expectancy/
+  // realized-RR/wins-losses-breakeven for the "Backtest" source from real
+  // numbers, instead of only the aggregate metrics INSERTed above. One
+  // batch() call rather than N sequential awaited inserts — a single run can
+  // produce hundreds of trades over a long window.
+  if (trades.length > 0) {
+    const tradeInsert = env.DB.prepare(
+      `INSERT INTO backtest_trades (id, backtest_run_id, strategy_id, symbol, direction, entry, sl, tp, exit_price, pnl, reason, opened_at, closed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    await env.DB.batch(
+      trades.map((t) =>
+        tradeInsert.bind(
+          makeId('btt'),
+          id,
+          strategyId,
+          upperSymbol,
+          t.direction,
+          t.entryFill,
+          t.sl,
+          t.tp,
+          t.exitFill,
+          t.pnl,
+          t.reason,
+          // candles[].timestamp is epoch ms (CoinGecko/Twelve Data's raw
+          // format — see candles.js), not the 'YYYY-MM-DD HH:MM:SS' string
+          // every other table's timestamps use. Convert here so
+          // backtest_trades stays directly comparable (plain string >=/<)
+          // against berlinDay.js's range helpers, same as trades/activity_log.
+          nowSqlFrom(candles[t.openIndex]?.timestamp),
+          nowSqlFrom(candles[t.exitIndex]?.timestamp)
+        )
+      )
+    );
   }
 
   const run = await env.DB.prepare('SELECT * FROM backtest_runs WHERE id = ?').bind(id).first();

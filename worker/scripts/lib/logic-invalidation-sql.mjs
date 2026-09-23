@@ -32,8 +32,16 @@ WHERE strategy_id = ${id};`,
     // Children before parents — no PRAGMA foreign_keys=OFF/backup-restore
     // needed here (unlike the trades-table rebuild migration this mirrors
     // the spirit of): this is a plain cascade delete, not a table rebuild,
-    // so normal FK enforcement is satisfied by ordering alone.
+    // so normal FK enforcement is satisfied by ordering alone. backtest_trades
+    // (individual simulated trades — see schema.sql's comment) is deleted
+    // here too, same as backtest_session_breakdown: both reference
+    // backtest_runs(id) with an FK D1 enforces, so leaving either behind
+    // would make the backtest_runs DELETE below fail outright, not just
+    // leave stale rows.
     `DELETE FROM backtest_session_breakdown
+WHERE backtest_run_id IN (SELECT id FROM backtest_runs WHERE strategy_id = ${id})
+  AND EXISTS (SELECT 1 FROM strategy_logic_versions WHERE strategy_id = ${id} AND logic_hash <> ${h});`,
+    `DELETE FROM backtest_trades
 WHERE backtest_run_id IN (SELECT id FROM backtest_runs WHERE strategy_id = ${id})
   AND EXISTS (SELECT 1 FROM strategy_logic_versions WHERE strategy_id = ${id} AND logic_hash <> ${h});`,
     `DELETE FROM backtest_runs
