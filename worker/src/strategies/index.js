@@ -22,6 +22,7 @@ import * as cryptoMfiEngulfing from './cryptoMfiEngulfing.js';
 import * as cryptoHolyGrailAdxSmaBb from './cryptoHolyGrailAdxSmaBb.js';
 import * as cryptoBbRsiTrendfilter from './cryptoBbRsiTrendfilter.js';
 import * as ictSweepMss from './ictSweepMss.js';
+import * as scKeylevelSweep from './scKeylevelSweep.js';
 
 // Order matches worker.js STRATEGIES registration order (crypto_baseline
 // first as the control group, then the rest in tradingview-bot integration
@@ -135,6 +136,22 @@ STRATEGY_REGISTRY.ict_sweep_mss_sl = {
   disableShorts: false,
   evaluate: ictSweepMss.evaluate,
   exit: { mode: 'levels_trailing' },
+};
+
+// sc_keylevel_sweep — session-key-level sweep -> CHoCH -> confluence-zone
+// entry, exit.mode:'levels' like ict_sweep_mss (structure-derived SL/TP off
+// the signal — see routes/webhook.js's computeBracket()), but with no
+// "(SL)" trailing twin: the strategy's own spec (scKeylevelSweep.js) only
+// describes a single fixed SL/TP scheme, not a trailing-management scheme,
+// so only the base key is registered here.
+STRATEGY_REGISTRY.sc_keylevel_sweep = {
+  key: 'sc_keylevel_sweep',
+  label: scKeylevelSweep.label,
+  assetClass: scKeylevelSweep.assetClass,
+  cooldownMinutes: null,
+  disableShorts: false,
+  evaluate: scKeylevelSweep.evaluate,
+  exit: scKeylevelSweep.exit,
 };
 
 export function getStrategy(strategyKey) {

@@ -223,6 +223,21 @@ jobs:
           "
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # sc_keylevel_sweep's default logic-threshold overrides — same
+      # rationale/idempotency guard as the ict_sweep_mss step above. Not yet
+      # read by any backtest adapter (none is registered — see
+      # worker/src/strategies/scKeylevelSweep.js's header), but kept visible/
+      # editable via the Settings UI ahead of that, same as every other
+      # params_json default in this workflow.
+      - name: Set sc_keylevel_sweep default params_json
+        run: |
+          npx wrangler d1 execute sierra-command-db --remote --command "
+            UPDATE strategy_settings SET params_json =
+              '{\"SESSION_ASIA\":\"01:00-09:00\",\"SESSION_LONDON\":\"09:00-14:30\",\"SESSION_NEWYORK\":\"14:30-22:00\",\"SESSION_TZ\":\"Europe/Berlin\",\"PIVOT_LEFT\":2,\"PIVOT_RIGHT\":2,\"CHOCH_TIMEOUT_MIN\":120,\"SL_ATR_BUFFER_MULT\":0.1,\"SL_ATR_LEN\":14,\"MIN_RR\":1.0,\"MIN_CONFLUENCE\":1}'
+              WHERE strategy_id = 'sc_keylevel_sweep' AND params_json = '{}';
+          "
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # Re-derives every strategy's logic hash straight from the current
       # backtest/adapters.js source and applies it as one idempotent SQL
       # file — see worker/scripts/generate-logic-invalidation-sql.mjs and

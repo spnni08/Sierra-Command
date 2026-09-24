@@ -92,18 +92,63 @@ function checkWebhookSecret(payload, env) {
   return { ok: true };
 }
 
-// Builds the {id, sl, tp} bracket for one strategy variant's exit config,
-// given an already-validated entry price and direction. Shared by the fixed
-// leg and the trailing-SL fan-out leg below — see the slPct/rMultiple
-// comment further down for why trailing variants bootstrap off
-// DEFAULT_EXIT.slPct.
-function computeBracket(exit, direction, entry) {
+// Builds the {sl, tp} bracket for one strategy variant's exit config, given
+// an already-validated entry price and direction. Shared by the fixed leg
+// and the trailing-SL fan-out leg below — see the slPct/rMultiple comment
+// further down for why trailing variants bootstrap off DEFAULT_EXIT.slPct.
+//
+// exit.mode === 'levels' (ict_sweep_mss, sc_keylevel_sweep) means SL/TP are
+// structure-derived, not a %/ATR bracket — the strategy's own adapter/Pine
+// script already computed them and sent them as payload.slPrice/tpPrice.
+// Previously this branch fell straight through to the generic %-bracket
+// below, silently discarding those payload values on every live trade for
+// any 'levels'-mode strategy — a real fidelity bug (caught while wiring
+// sc_keylevel_sweep, which genuinely needs its SL behind the sweep extreme
+// and its TP at the next key level, not a generic 1%/1.5R guess). Falls
+// back to the generic bracket only if the payload is missing/invalid
+// numbers, so a Pine script that forgets to send them still opens a trade
+// with a sane stop instead of being rejected outright.
+function computeBracket(exit, direction, entry, payload) {
+  // 'levels_trailing' (the "_sl" twin of a 'levels'-mode strategy, e.g.
+  // ict_sweep_mss_sl) starts from the exact same structural levels — its
+  // trailing management only changes how the stop moves AFTER entry, never
+  // the initial SL/TP (see index.js's registration comment for that pair).
+  if (exit.mode === 'levels' || exit.mode === 'levels_trailing') {
+    const sl = Number(payload?.slPrice);
+    const tp = Number(payload?.tpPrice);
+    if (Number.isFinite(sl) && Number.isFinite(tp)) return { sl, tp };
+  }
   const slPct = exit.mode === 'fixed' ? exit.slPct : DEFAULT_EXIT.slPct;
   const rMultiple = exit.tp2RMultiple ?? DEFAULT_EXIT.tp2RMultiple;
   const slDistance = entry * (slPct / 100);
   const sl = direction === 'long' ? entry - slDistance : entry + slDistance;
   const tp = direction === 'long' ? entry + slDistance * rMultiple : entry - slDistance * rMultiple;
   return { sl, tp };
+}
+
+// signals.exit_mode/trades.exit_mode are CHECK-constrained to
+// ('fixed','trailing') only (schema.sql) — a narrower set than the real
+// exit.mode values the strategy registry actually uses (also 'signal',
+// 'signal_or_sltp', 'levels', 'levels_trailing' — see strategies/index.js's
+// crypto_flawless_victory_v2/v3 and ict_sweep_mss/_sl registrations, and now
+// sc_keylevel_sweep). Binding the raw mode string here would violate that
+// CHECK on every webhook call to any of those strategies (caught while
+// wiring sc_keylevel_sweep — this affects ict_sweep_mss and
+// crypto_flawless_victory just as much, they just never received a real
+// webhook call yet). Rather than widen the CHECK (a same-day rebuild of two
+// FK-linked tables, signals <- trades <- activity_log, for a column that
+// nothing downstream reads at finer granularity than this), every mode maps
+// onto the semantic bucket the rest of the app already expects: 'trailing'
+// for anything whose SL is meant to move (checkOpenTrades.js's evaluateExit
+// only ever checks `exit_mode === 'trailing'` to pick the close-reason
+// label, 'trailing_stop' vs 'sl' — never a finer-grained mode), 'fixed' for
+// everything else (a static bracket, whether %-based or structure-derived).
+// The full-detail mode ('levels', 'signal', ...) never needs to survive
+// past this function — every other consumer of a strategy's exit config
+// reads it straight from the registry (strategy.exit.mode), never from this
+// persisted column.
+function dbExitMode(mode) {
+  return mode === 'trailing' || mode === 'levels_trailing' ? 'trailing' : 'fixed';
 }
 
 async function processWebhook(request, env, strategyKey) {
@@ -190,7 +235,7 @@ async function processWebhook(request, env, strategyKey) {
     `INSERT INTO signals (id, strategy_id, symbol, timestamp, score, factor_state, status, exit_mode, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(signalId, strategyKey, symbol, ts, score, factorState, result.passed ? 'converted' : 'rejected', strategy.exit.mode, ts)
+    .bind(signalId, strategyKey, symbol, ts, score, factorState, result.passed ? 'converted' : 'rejected', dbExitMode(strategy.exit.mode), ts)
     .run();
 
   if (!result.passed) {
@@ -219,7 +264,7 @@ async function processWebhook(request, env, strategyKey) {
       `INSERT INTO signals (id, strategy_id, symbol, timestamp, score, factor_state, status, exit_mode, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'converted', ?, ?)`
     )
-      .bind(pairedSignalId, slKey, symbol, ts, score, factorState, slStrategy.exit.mode, ts)
+      .bind(pairedSignalId, slKey, symbol, ts, score, factorState, dbExitMode(slStrategy.exit.mode), ts)
       .run();
   }
 
@@ -255,14 +300,14 @@ async function processWebhook(request, env, strategyKey) {
   // this endpoint). DEFAULT_EXIT.slPct is used as the initial bootstrap SL
   // so the trade still opens with a sane stop; a later trailing-update step
   // is expected to move it.
-  const { sl, tp } = computeBracket(strategy.exit, direction, entry);
+  const { sl, tp } = computeBracket(strategy.exit, direction, entry, payload);
 
   const tradeId = makeId(`trd-${strategyKey}`);
   await env.DB.prepare(
     `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, opened_at, closed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, NULL)`
   )
-    .bind(tradeId, signalId, symbol, direction, entry, sl, tp, volume, strategy.exit.mode, timeframe, ts)
+    .bind(tradeId, signalId, symbol, direction, entry, sl, tp, volume, dbExitMode(strategy.exit.mode), timeframe, ts)
     .run();
 
   await logActivity(
@@ -274,13 +319,13 @@ async function processWebhook(request, env, strategyKey) {
 
   let pairedTrade = null;
   if (slStrategy && pairedSignalId) {
-    const { sl: pairedSl, tp: pairedTp } = computeBracket(slStrategy.exit, direction, entry);
+    const { sl: pairedSl, tp: pairedTp } = computeBracket(slStrategy.exit, direction, entry, payload);
     const pairedTradeId = makeId(`trd-${slKey}`);
     await env.DB.prepare(
       `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, opened_at, closed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, NULL)`
     )
-      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, pairedSl, pairedTp, volume, slStrategy.exit.mode, timeframe, ts)
+      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, pairedSl, pairedTp, volume, dbExitMode(slStrategy.exit.mode), timeframe, ts)
       .run();
 
     await logActivity(

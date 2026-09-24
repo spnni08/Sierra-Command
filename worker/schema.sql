@@ -18,10 +18,18 @@ CREATE TABLE IF NOT EXISTS signals (
   score REAL NOT NULL,
   factor_state TEXT NOT NULL DEFAULT '{}', -- JSON
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','converted','rejected')),
-  -- 'fixed' = static %/R SL+TP from EXIT_CONFIG defaults (or a strategy
-  -- override); 'trailing' = the strategy's "(SL)" variant, whose SL trails
-  -- a per-strategy anchor (ATR, S&R zone, Bollinger band edge, Kumo edge, or
-  -- last HL/LH swing point — see strategies.factor_definition.trailing_anchor).
+  -- 'fixed' = a static bracket (percentage/R-multiple OR structure-derived,
+  -- e.g. ict_sweep_mss/sc_keylevel_sweep's exit.mode:'levels' — see below);
+  -- 'trailing' = the strategy's "(SL)" variant, whose SL trails a
+  -- per-strategy anchor (ATR, S&R zone, Bollinger band edge, Kumo edge, last
+  -- HL/LH swing point, or a structure-derived trail like
+  -- exit.mode:'levels_trailing' — see strategies.factor_definition.trailing_anchor).
+  -- This is a semantic bucket, not the literal strategy.exit.mode string —
+  -- routes/webhook.js's dbExitMode() maps every registry exit mode ('fixed',
+  -- 'trailing', 'signal', 'signal_or_sltp', 'levels', 'levels_trailing') onto
+  -- one of these two, since nothing downstream (checkOpenTrades.js's
+  -- evaluateExit) needs finer granularity than "does the SL move or not" —
+  -- the full-detail mode always lives in the strategy registry, never here.
   exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -45,9 +53,9 @@ CREATE TABLE IF NOT EXISTS trades (
   source TEXT NOT NULL CHECK (source IN ('binance_testnet','binance_live','oanda_demo','oanda_live','oanda_demo_simulated')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   pnl REAL,
-  -- Mirrors signals.exit_mode at the time this trade was opened: 'fixed'
-  -- (static SL/TP) or 'trailing' (SL trails the strategy's anchor — see
-  -- worker/src/strategies/*.js EXIT.trailing.anchor per strategy).
+  -- Mirrors signals.exit_mode at the time this trade was opened — see that
+  -- column's comment above (same semantic-bucket mapping, not the literal
+  -- strategy.exit.mode string).
   exit_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (exit_mode IN ('fixed','trailing')),
   -- The chart timeframe the TradingView alert fired from (e.g. TradingView's
   -- raw {{interval}} codes: '1','5','15','60','240','D','W'), read verbatim
@@ -381,7 +389,18 @@ INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_defini
     '2026-09-22 09:00:00', '2026-09-22 09:00:00'),
   ('ict_sweep_mss_sl', 'ICT Sweep -> MSS -> FVG (SL)', '["BTCUSDT","ETHUSDT","SOLUSDT","EURUSD","SPX500","NAS100"]', 1,
     '{"factors":["liquidity_sweep","displacement","mss","fvg_present","min_rr_ok","htf_bias_ok"],"exit_mode":"levels_trailing","timeframe":"15m","trailing_anchor":"swing_point_breakeven_then_trail"}',
-    '2026-09-22 09:00:01', '2026-09-22 09:00:01');
+    '2026-09-22 09:00:01', '2026-09-22 09:00:01'),
+
+  -- sc_keylevel_sweep — Session-Key-Level Sweep -> CHoCH/BOS -> confluence
+  -- entry zone (IFVG/FVG/OB/Breaker/Fibonacci) -> Entry/SL/TP (see
+  -- worker/src/strategies/scKeylevelSweep.js for the full spec). No "(SL)"
+  -- trailing twin — the spec only describes a single fixed structural
+  -- SL/TP scheme. Not yet backtestable (no adapter registered — see that
+  -- file's header): no 5-minute crypto candle source exists in this worker
+  -- today, and this strategy's logic only means anything on 5m candles.
+  ('sc_keylevel_sweep', 'SC Key-Level Sweep', '["BTCUSDT","ETHUSDT","SOLUSDT","EURUSD","SPX500","NAS100"]', 1,
+    '{"factors":["liquidity_sweep","choch_confirmed","entry_close_in_zone","confluence_min_ok","min_rr_ok","not_invalidated"],"exit_mode":"levels","sessions":{"asia":"01:00-09:00","london":"09:00-14:30","new_york":"14:30-22:00","tz":"Europe/Berlin"},"choch_timeout_min":120,"min_rr":1.0,"min_confluence":1,"backtest_status":"no_adapter_needs_5m_candles"}',
+    '2026-09-23 22:30:00', '2026-09-23 22:30:00');
 
 -- Deliberately does NOT list params_json here, even though the CREATE TABLE
 -- above declares it: on the already-live remote D1, this file's own CREATE
@@ -423,7 +442,8 @@ INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, sessio
   ('crypto_bb_rsi_trendfilter', 1.0, '[]', 0.7, 0.5),
   ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5),
   ('ict_sweep_mss', 1.0, '[]', 0.7, 0.5),
-  ('ict_sweep_mss_sl', 1.0, '[]', 0.7, 0.5);
+  ('ict_sweep_mss_sl', 1.0, '[]', 0.7, 0.5),
+  ('sc_keylevel_sweep', 1.0, '[]', 0.7, 0.5);
 
 -- No seed trades/activity_log/backtest_runs rows here on purpose — see the
 -- DELETEs above. From here on these tables only ever hold rows written by
