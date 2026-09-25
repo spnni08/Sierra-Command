@@ -1,0 +1,21 @@
+{
+  "strategy": "crypto_bb_rsi_trendfilter",
+  "strategy_key": "crypto_bb_rsi_trendfilter",
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "BB_RSI_TREND_UP",
+  "timeframe": "15",
+  "price": 111400,
+  "bb_upper": 111000,
+  "bb_lower": 108900,
+  "rsi3": 18,
+  "trend_up": true,
+  "trend_down": false,
+  "rsi_cross_up_20": true,
+  "rsi_cross_down_80": false,
+  "entry_mode": "next_open",
+  "sl": 110200,
+  "timestamp": "1758700000000",
+  "is_test": 0
+}

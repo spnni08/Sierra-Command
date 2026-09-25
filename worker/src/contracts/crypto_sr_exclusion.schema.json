@@ -1,0 +1,26 @@
+{
+  "strategyId": "crypto_sr_exclusion",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "rsi",
+    "ema200",
+    "support",
+    "resistance",
+    "zoneTouch",
+    "atrSpike",
+    "htf4hCounterTrend",
+    "thinVolume",
+    "trigger",
+    "timestamp",
+    "atr_spike",
+    "thin_volume",
+    "cooldown_active",
+    "timeframe",
+    "is_test"
+  ]
+}

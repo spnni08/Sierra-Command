@@ -36,9 +36,15 @@ function kumoBottom(s) {
   return Math.min(a, b);
 }
 
+// `fields` per shared.js's header comment. crypto_ichimoku_breakout.pine
+// currently sends `adx_value` (not `adx`) and `chikou` (not `chikou_ref`/
+// `chikou_reference`) — verified 2026-09-25 — so `adx_regime_min` and
+// `chikou_confirm` are expected to land in `missing` until either side is
+// renamed to match the other.
 const factors = [
   {
     name: 'kumo_breakout',
+    fields: ['senkou_a', 'senkou_b'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       if (!Number.isFinite(close)) return false;
@@ -49,6 +55,7 @@ const factors = [
   },
   {
     name: 'adx_regime_min',
+    fields: ['adx'],
     check: (s) => {
       const adx = num(s.adx);
       return Number.isFinite(adx) && adx > params.ADX_MIN;
@@ -56,6 +63,7 @@ const factors = [
   },
   {
     name: 'chikou_confirm',
+    fields: ['chikou_ref'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const chikouRef = num(s.chikou_ref ?? s.chikou_reference);
@@ -65,6 +73,7 @@ const factors = [
   },
   {
     name: 'volume_spike',
+    fields: ['candle_volume', 'avg_volume'],
     check: (s) => {
       const vol = num(s.candle_volume);
       const avg = num(s.avg_volume);

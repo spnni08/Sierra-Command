@@ -1,0 +1,24 @@
+{
+  "strategyId": "crypto_bb_rsi_trendfilter",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "bb_lower",
+    "bb_upper",
+    "entry_mode",
+    "rsi3",
+    "rsi_cross_down_80",
+    "rsi_cross_up_20",
+    "sl",
+    "trend_down",
+    "trend_up",
+    "trigger",
+    "timestamp",
+    "timeframe",
+    "is_test"
+  ]
+}

@@ -24,13 +24,20 @@ export const params = {
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'swing_point' };
 export const exit = {}; // EXIT_CONFIG defaults — Pine's own OB/swing SL stays payload telemetry only, see worker.js comment
 
+// `fields` per shared.js's header comment. crypto_ict_smc.pine sends
+// `htf_zone_type` (a string like "demand"/"supply") and `equilibrium_
+// position`, never `htf_zone_touch`/`zone_touch` — verified 2026-09-25 — so
+// this factor is expected to always land in `missing`, even though Pine
+// only ever fires the alert after its own internal zone-touch gate passed.
 const factors = [
   {
     name: 'htf_zone_touch',
+    fields: ['htf_zone_touch'],
     check: (s) => !!(s.htf_zone_touch ?? s.zone_touch),
   },
   {
     name: 'min_confirmations',
+    fields: ['confirmations_count'],
     check: (s) => {
       const count = num(s.confirmations_count);
       const min = num(s.min_confirmations);

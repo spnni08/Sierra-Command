@@ -27,9 +27,16 @@ export const params = {
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'atr' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. All four fields below are
+// currently sent by crypto_orderflow_breakout.pine (verified 2026-09-25) —
+// this is the one base strategy whose payload already matches the code
+// 1:1. `rsi9_not_exhausted` deliberately has no `fields` entry: it already
+// degrades to a pass when rsi9 is absent (see its own comment), so the
+// generic missing-detector would only obscure that intentional behavior.
 const factors = [
   {
     name: 'range_breakout_trigger',
+    fields: ['range_high', 'range_low'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const high = num(s.range_high);
@@ -42,6 +49,7 @@ const factors = [
   },
   {
     name: 'volume_ratio_min',
+    fields: ['candle_volume', 'avg_volume'],
     check: (s) => {
       const vol = num(s.candle_volume);
       const avg = num(s.avg_volume);
@@ -51,6 +59,7 @@ const factors = [
   },
   {
     name: 'ema200_trend_filter',
+    fields: ['ema200'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const ema = num(s.ema200);

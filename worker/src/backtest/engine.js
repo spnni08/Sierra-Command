@@ -324,7 +324,13 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       const signal = signalAt(i, direction);
       if (!signal) continue;
       const result = strategy.evaluate(signal);
-      if (!result.passed) continue;
+      // Backtesting is unaffected by the 2026-09-25 live-webhook decision
+      // (strategies/shared.js's header comment) — a simulated candle series
+      // has no Pine-side gate to trust, so the backtest engine still needs a
+      // strict pass/fail here. `legacyPassed` is exactly the old `passed`
+      // (hard AND, missing counts as failing), just renamed to make clear
+      // routes/webhook.js no longer reads it that way.
+      if (!result.legacyPassed) continue;
 
       // ict_sweep_mss/_sl (exit.mode 'levels'/'levels_trailing'): entry fills
       // at the adapter's own structure-derived limit price (the FVG

@@ -1,0 +1,25 @@
+{
+  "strategyId": "crypto_mfi_engulfing",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "mfi",
+    "mfi_oversold_extreme",
+    "mfi_overbought_extreme",
+    "bullish_engulf",
+    "bearish_engulf",
+    "entry_trigger",
+    "sl",
+    "trigger",
+    "timestamp",
+    "engulfing_bullish",
+    "engulfing_bearish",
+    "engulfing",
+    "timeframe",
+    "is_test"
+  ]
+}

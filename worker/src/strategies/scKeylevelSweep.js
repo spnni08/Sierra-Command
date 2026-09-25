@@ -124,13 +124,17 @@ export const requiredBacktestTimeframe = '5m';
 // separate breakeven+trail design for its "_sl" twin.
 export const exit = { mode: 'levels' }; // structural SL/TP straight off the signal, same as ict_sweep_mss — see index.js's manual registration and routes/webhook.js's computeBracket()
 
+// `fields` per shared.js's header comment. No TradingView alert script
+// exists yet for sc_keylevel_sweep — these declarations are the
+// forward-looking contract for whoever writes one, not evidence of current
+// drift.
 const factors = [
-  { name: 'liquidity_sweep', check: (s) => !!s.liquidity_sweep },
-  { name: 'choch_confirmed', check: (s) => !!s.choch_confirmed },
-  { name: 'entry_close_in_zone', check: (s) => !!s.entry_close_in_zone },
-  { name: 'confluence_min_ok', check: (s) => !!s.confluence_min_ok },
-  { name: 'min_rr_ok', check: (s) => !!s.min_rr_ok },
-  { name: 'not_invalidated', check: (s) => !!s.not_invalidated },
+  { name: 'liquidity_sweep', fields: ['liquidity_sweep'], check: (s) => !!s.liquidity_sweep },
+  { name: 'choch_confirmed', fields: ['choch_confirmed'], check: (s) => !!s.choch_confirmed },
+  { name: 'entry_close_in_zone', fields: ['entry_close_in_zone'], check: (s) => !!s.entry_close_in_zone },
+  { name: 'confluence_min_ok', fields: ['confluence_min_ok'], check: (s) => !!s.confluence_min_ok },
+  { name: 'min_rr_ok', fields: ['min_rr_ok'], check: (s) => !!s.min_rr_ok },
+  { name: 'not_invalidated', fields: ['not_invalidated'], check: (s) => !!s.not_invalidated },
   { name: 'direction_present', check: (s) => isLong(s) || isShort(s) },
 ];
 

@@ -1,0 +1,15 @@
+{
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "timeframe": "15",
+  "price": 110600,
+  "liquidity_sweep": true,
+  "displacement": true,
+  "mss": true,
+  "fvg_present": true,
+  "min_rr_ok": true,
+  "htf_bias_ok": true,
+  "slPrice": 109500,
+  "tpPrice": 112900,
+  "is_test": 0
+}

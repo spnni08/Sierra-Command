@@ -160,13 +160,17 @@ export function getStrategy(strategyKey) {
 
 /**
  * Evaluates a raw signal payload against a registered strategy (base or
- * "(SL)" variant) and returns the pass/fail result plus the resolved exit
- * config for that variant.
+ * "(SL)" variant) and returns the informational {legacyPassed, matched,
+ * failed, missing} factor telemetry plus the resolved exit config for that
+ * variant — see strategies/shared.js's header comment: this no longer gates
+ * whether a trade opens (routes/webhook.js's checkStructuralValidity +
+ * risk/riskEngine.js do that now), only records what Pine's own factors
+ * would have said under the pre-2026-09-25 hard-AND model.
  */
 export function evaluateSignal(strategyKey, signal) {
   const strategy = getStrategy(strategyKey);
   if (!strategy) {
-    return { passed: false, error: 'unknown_strategy', strategyKey };
+    return { legacyPassed: false, matched: [], failed: [], missing: [], error: 'unknown_strategy', strategyKey };
   }
   const result = strategy.evaluate(signal);
   return { ...result, strategyKey, exit: strategy.exit };

@@ -32,9 +32,19 @@ export const params = {
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'sr_zone' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. crypto_sr_exclusion.pine's
+// current f_payload() sends `trigger` as "SR_SUPPORT_BOUNCE"/
+// "SR_RESISTANCE_BOUNCE" (never "SUPPORT_TOUCH"/"RESISTANCE_TOUCH"/
+// "SR_TOUCH"), and sends `atrSpike`/`thinVolume` (camelCase, not the
+// snake_case `atr_spike`/`thin_volume` below) while never sending
+// `cooldown_active` at all — verified 2026-09-25. `sr_zone_touch` is
+// therefore expected to land in `failed` (the field IS present, just never
+// with a value this check recognizes) rather than `missing`; the three
+// negative criteria are expected in `missing`.
 const preconditionFactors = [
   {
     name: 'sr_zone_touch',
+    fields: ['trigger'],
     check: (s) => {
       const trigger = String(s.trigger ?? s.setup_type ?? '').toUpperCase();
       return trigger === 'SUPPORT_TOUCH' || trigger === 'RESISTANCE_TOUCH' || trigger === 'SR_TOUCH';
@@ -42,6 +52,7 @@ const preconditionFactors = [
   },
   {
     name: 'rsi_trend_bounce_direction',
+    fields: ['rsi'],
     check: (s) => {
       const rsi = num(s.rsi);
       if (!Number.isFinite(rsi)) return false;
@@ -51,13 +62,17 @@ const preconditionFactors = [
 ];
 
 // Negative-score criteria: `true` means the criterion GIVES its 20 points
-// (i.e. the adverse condition is ABSENT). All four passing => full 80.
+// (i.e. the adverse condition is ABSENT). All four passing => full 80. This
+// score is informational only as of 2026-09-25 (see shared.js's header
+// comment) — nothing reads it to block a trade anymore, only `legacyScore`
+// for audit/comparison against the pre-2026-09-25 behavior.
 const negativeCriteria = [
-  { name: 'no_atr_spike', points: 20, check: (s) => !s.atr_spike },
-  { name: 'no_thin_volume', points: 20, check: (s) => !s.thin_volume },
+  { name: 'no_atr_spike', points: 20, fields: ['atr_spike'], check: (s) => !s.atr_spike },
+  { name: 'no_thin_volume', points: 20, fields: ['thin_volume'], check: (s) => !s.thin_volume },
   {
     name: 'rsi_not_opposite_extreme',
     points: 20,
+    fields: ['rsi'],
     check: (s) => {
       const rsi = num(s.rsi);
       if (!Number.isFinite(rsi)) return true;
@@ -68,26 +83,30 @@ const negativeCriteria = [
           : true;
     },
   },
-  { name: 'cooldown_elapsed', points: 20, check: (s) => !s.cooldown_active },
+  { name: 'cooldown_elapsed', points: 20, fields: ['cooldown_active'], check: (s) => !s.cooldown_active },
 ];
 
 export function evaluate(signal) {
   const precondition = evaluateFactors(signal, preconditionFactors);
-  if (!precondition.passed) {
-    return { passed: false, matched: precondition.matched, failed: precondition.failed, score: 0 };
-  }
 
-  let score = 0;
+  let legacyScore = 0;
   const matched = [...precondition.matched];
-  const failed = [];
+  const failed = [...precondition.failed];
+  const missing = [...precondition.missing];
   for (const c of negativeCriteria) {
+    const missingFields = (c.fields ?? []).filter((f) => signal[f] === undefined || signal[f] === null);
+    if (missingFields.length > 0) {
+      missing.push({ name: c.name, fields: missingFields });
+      continue;
+    }
     if (c.check(signal)) {
-      score += c.points;
+      legacyScore += c.points;
       matched.push(c.name);
     } else {
       failed.push(c.name);
     }
   }
 
-  return { passed: score >= params.THRESHOLD, matched, failed, score };
+  const legacyPassed = precondition.legacyPassed && legacyScore >= params.THRESHOLD;
+  return { legacyPassed, matched, failed, missing, legacyScore };
 }

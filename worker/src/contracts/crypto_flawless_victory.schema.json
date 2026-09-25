@@ -1,0 +1,20 @@
+{
+  "strategyId": "crypto_flawless_victory",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "rsi",
+    "mfi",
+    "htf_filter_active",
+    "htf_filter_passed",
+    "version",
+    "trigger",
+    "timestamp",
+    "timeframe",
+    "is_test"
+  ]
+}

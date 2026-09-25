@@ -1,0 +1,14 @@
+{
+  "strategy": "crypto_baseline",
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "BUY",
+  "timeframe": "5",
+  "price": 111200,
+  "rsi": 32,
+  "ema50": 110900,
+  "ema200": 109800,
+  "trend": "BULLISH",
+  "timestamp": "1758700000000"
+}

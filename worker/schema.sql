@@ -68,6 +68,23 @@ CREATE TABLE IF NOT EXISTS trades (
   -- — this column always keeps exactly what was received/computed, nothing
   -- is rewritten on write.
   timeframe TEXT,
+  -- Denormalized copy of the signal's matched/failed/missing factor
+  -- telemetry at the moment this trade opened (see routes/webhook.js's
+  -- processWebhook and strategies/shared.js's evaluateFactors) — lets a
+  -- trade be inspected without joining back to `signals`. Factors no longer
+  -- gate trade-opening as of 2026-09-25 (Pine's signal is trusted; see
+  -- webhook.js's header comment) — this is purely informational, same JSON
+  -- shape as signals.factor_state: {matched, failed, missing, legacyPassed}.
+  -- NULL for trades opened before this column existed.
+  factor_state TEXT,
+  -- Shared between a base trade and its paired "(SL)" trade when both open
+  -- from the same webhook call (see webhook.js's fan-out) — the risk
+  -- engine's max-open-positions rule counts one position_group_id as ONE
+  -- position, not two, per the 2026-09-25 risk-rules decision. A trade
+  -- opened alone (no pair, or opened before this column existed) has its
+  -- own id here trivially standing in for the group — see riskEngine.js's
+  -- countOpenPositions, which COALESCEs to trades.id when this is NULL.
+  position_group_id TEXT,
   opened_at TEXT NOT NULL DEFAULT (datetime('now')),
   closed_at TEXT
 );
@@ -76,6 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_trades_source ON trades(source);
 CREATE INDEX IF NOT EXISTS idx_trades_signal_id ON trades(signal_id);
 CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades(opened_at);
+CREATE INDEX IF NOT EXISTS idx_trades_position_group_id ON trades(position_group_id);
 
 CREATE TABLE IF NOT EXISTS backtest_runs (
   id TEXT PRIMARY KEY,
@@ -163,6 +181,37 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_id ON backtest_trades(backtest_run_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_strategy_id ON backtest_trades(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_closed_at ON backtest_trades(closed_at);
+
+-- Global auto-trade risk rules (worker/src/risk/riskEngine.js), evaluated
+-- once per webhook call before a trade opens — see that module's header
+-- comment for the full rule order. A single key-value table rather than
+-- dedicated columns/tables per rule: every value here is a simple scalar
+-- (a switch, a count, a currency amount, an hour), there's exactly one row
+-- of "current config" (no per-user/per-environment variants), and this
+-- keeps adding a future rule's config a plain INSERT rather than a schema
+-- migration. Per-strategy overrides (active/inactive, session_filter) stay
+-- on `strategies`/`strategy_settings` instead — only what's genuinely
+-- global lives here.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+INSERT OR IGNORE INTO app_settings (key, value) VALUES
+  -- Master switch: 'true'/'false'. Off blocks every strategy's trades
+  -- regardless of their own `active` flag.
+  ('auto_trading_enabled', 'true'),
+  -- Counts a base+"(SL)" pair as ONE position (see trades.position_group_id).
+  ('max_open_positions', '5'),
+  -- Realized PnL floor for the current Europe/Berlin calendar day (sum of
+  -- trades.pnl for trades closed today) — reaching or crossing it (<=)
+  -- blocks new trades until the next Berlin day. Positive number, compared
+  -- against the negative sum.
+  ('daily_loss_limit_usd', '500'),
+  -- Trading-hours window, UTC hour-of-day, [start, end) — matches the
+  -- 06-22 UTC window named in earlier investigation of this app's trading
+  -- gaps. end=22 means the window closes at 22:00 UTC, not through it.
+  ('trading_hours_start_utc', '6'),
+  ('trading_hours_end_utc', '22');
 
 CREATE TABLE IF NOT EXISTS strategy_settings (
   strategy_id TEXT PRIMARY KEY REFERENCES strategies(id),

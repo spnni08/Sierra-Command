@@ -1,0 +1,19 @@
+{
+  "strategy": "crypto_sr_exclusion",
+  "symbol": "BTCUSDT",
+  "timeframe": "15",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "SR_SUPPORT_BOUNCE",
+  "price": 110300,
+  "rsi": 45,
+  "ema200": 109800,
+  "support": 110200,
+  "resistance": 111500,
+  "zoneTouch": true,
+  "atrSpike": false,
+  "htf4hCounterTrend": false,
+  "thinVolume": false,
+  "timestamp": "1758700000000",
+  "is_test": 0
+}

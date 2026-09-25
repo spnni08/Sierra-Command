@@ -1,0 +1,34 @@
+{
+  "strategyId": "crypto_ichimoku_breakout",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "adx_rising",
+    "adx_value",
+    "avg_volume",
+    "candle_volume",
+    "chikou",
+    "cloud_thickness",
+    "ema200",
+    "ema50",
+    "htf_filter_active",
+    "htf_filter_passed",
+    "kijun",
+    "regime",
+    "rsi",
+    "senkou_a",
+    "senkou_b",
+    "tenkan",
+    "trigger",
+    "vol_ratio",
+    "adx",
+    "chikou_ref",
+    "chikou_reference",
+    "timeframe",
+    "is_test"
+  ]
+}

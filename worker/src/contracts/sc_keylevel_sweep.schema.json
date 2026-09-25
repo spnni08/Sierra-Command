@@ -1,0 +1,27 @@
+{
+  "strategyId": "sc_keylevel_sweep",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "liquidity_sweep",
+    "choch_confirmed",
+    "entry_close_in_zone",
+    "confluence_min_ok",
+    "confluence_count",
+    "confluence_factors",
+    "min_rr_ok",
+    "not_invalidated",
+    "slPrice",
+    "tpPrice",
+    "swept_level_type",
+    "swept_level_price",
+    "sweep_time",
+    "choch_time",
+    "timeframe",
+    "is_test"
+  ],
+  "note": "No TradingView alert script exists yet for this strategy \u2014 fixture reflects the JS module's own documented contract (scKeylevelSweep.js header), not a real Pine payload."
+}

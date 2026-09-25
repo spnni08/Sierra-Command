@@ -48,10 +48,12 @@ export const V3_EXIT = { mode: 'signal_or_sltp', slPct: 4.0, tpPct: 5.5 };
 const factors = [
   {
     name: 'bb_rsi_mfi_cross_trigger',
+    fields: ['trigger'],
     check: (s) => !!(s.bb_buy_trigger || s.bb_sell_trigger || s.trigger),
   },
   {
     name: 'valid_version',
+    fields: ['version'],
     check: (s) => params.VALID_VERSIONS.includes(String(s.version ?? '').toLowerCase()),
   },
   {

@@ -1,0 +1,18 @@
+{
+  "strategy": "crypto_mfi_engulfing",
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "MFI_ENGULF",
+  "timeframe": "15",
+  "price": 110400,
+  "mfi": 8,
+  "mfi_oversold_extreme": true,
+  "mfi_overbought_extreme": false,
+  "bullish_engulf": true,
+  "bearish_engulf": false,
+  "entry_trigger": 110400,
+  "sl": 109700,
+  "timestamp": "1758700000000",
+  "is_test": 0
+}

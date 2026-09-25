@@ -1,0 +1,24 @@
+{
+  "strategyId": "crypto_sr_bollinger",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "adaptive_stop_active",
+    "bb_basis",
+    "bb_lower",
+    "bb_upper",
+    "ema200",
+    "rsi",
+    "stop_loss",
+    "trigger",
+    "timestamp",
+    "low",
+    "high",
+    "timeframe",
+    "is_test"
+  ]
+}

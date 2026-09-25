@@ -1,0 +1,21 @@
+{
+  "strategyId": "ict_sweep_mss",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "liquidity_sweep",
+    "displacement",
+    "mss",
+    "fvg_present",
+    "min_rr_ok",
+    "htf_bias_ok",
+    "slPrice",
+    "tpPrice",
+    "timeframe",
+    "is_test"
+  ],
+  "note": "No TradingView alert script exists yet for this strategy \u2014 fixture reflects the JS module's own documented contract (ictSweepMss.js header), not a real Pine payload."
+}

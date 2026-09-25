@@ -1,0 +1,32 @@
+{
+  "strategyId": "crypto_sr_volume",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "rsi",
+    "ema50",
+    "ema200",
+    "poc",
+    "vah",
+    "val",
+    "vp_zone",
+    "upper_sup",
+    "lower_sup",
+    "upper_res",
+    "lower_res",
+    "os",
+    "trend",
+    "entry_mode",
+    "sfp_wick_extreme",
+    "htfConfirmed",
+    "action",
+    "timestamp",
+    "is_test",
+    "trigger",
+    "setup_type",
+    "timeframe"
+  ]
+}
