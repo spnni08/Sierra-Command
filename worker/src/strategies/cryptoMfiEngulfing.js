@@ -22,9 +22,14 @@ export const params = {
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'atr' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. crypto_mfi_engulfing.pine
+// currently sends `bullish_engulf`/`bearish_engulf` (not `engulfing_bullish`/
+// `engulfing_bearish`/`engulfing`) — verified 2026-09-25 — so
+// `filtered_engulfing_pattern` is expected to land in `missing`.
 const factors = [
   {
     name: 'mfi_extreme_zone',
+    fields: ['mfi'],
     check: (s) => {
       const mfi = num(s.mfi);
       if (!Number.isFinite(mfi)) return false;
@@ -33,6 +38,7 @@ const factors = [
   },
   {
     name: 'filtered_engulfing_pattern',
+    fields: ['engulfing_bullish'],
     check: (s) => !!(s.engulfing_bullish || s.engulfing_bearish || s.engulfing),
   },
 ];

@@ -20,9 +20,14 @@ export const disableShorts = true;
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'sr_zone' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. `reclaim_breakdown_trigger`
+// declares `trigger` — crypto_sr_volume.pine's current f_payload() never
+// serializes its `_trigger` parameter into the JSON at all (verified
+// 2026-09-25), so this factor is expected to always land in `missing`.
 const factors = [
   {
     name: 'reclaim_breakdown_trigger',
+    fields: ['trigger'],
     check: (s) => {
       const trigger = upper(s.trigger ?? s.setup_type);
       if (isLong(s)) return trigger === 'RECLAIM' || trigger === 'VAL_BOUNCE';
@@ -32,6 +37,7 @@ const factors = [
   },
   {
     name: 'ema200_trend_filter',
+    fields: ['ema200'],
     check: (s) => {
       const close = parseFloat(s.close ?? s.price);
       const ema = parseFloat(s.ema200);

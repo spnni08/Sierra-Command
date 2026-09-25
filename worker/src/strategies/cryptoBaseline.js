@@ -32,9 +32,16 @@ function emaDistPct(signal) {
   return Math.abs((close - ema) / ema) * 100;
 }
 
+// `fields` on each factor below is the informational payload-drift contract
+// (see shared.js's header comment) — the set matches exactly what
+// tradingview-bot/pinescript/strategies/crypto_baseline.pine's f_payload()
+// sends today (rsi, ema50, ema200, trend, price — verified 2026-09-25), so
+// every factor here is currently satisfiable; nothing is expected to land in
+// `missing`.
 const factors = [
   {
     name: 'trend_ema200',
+    fields: ['ema200'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const ema = num(s.ema200);
@@ -44,6 +51,7 @@ const factors = [
   },
   {
     name: 'rsi_pullback_trigger',
+    fields: ['rsi'],
     check: (s) => {
       const rsi = num(s.rsi);
       if (!Number.isFinite(rsi)) return false;
@@ -52,6 +60,7 @@ const factors = [
   },
   {
     name: 'ema_dist_sweet_spot',
+    fields: ['ema200'],
     check: (s) => {
       const d = emaDistPct(s);
       return Number.isFinite(d) && d >= params.EMA_DIST_MIN_PCT && d <= params.EMA_DIST_MAX_PCT;
@@ -59,6 +68,7 @@ const factors = [
   },
   {
     name: 'rsi_outside_dead_zone',
+    fields: ['rsi'],
     check: (s) => {
       const rsi = num(s.rsi);
       if (!Number.isFinite(rsi)) return false;

@@ -1,0 +1,29 @@
+{
+  "strategyId": "crypto_ict_smc",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "bos_confirmed",
+    "choch_confirmed",
+    "confirmations_count",
+    "equilibrium_position",
+    "fvg_present",
+    "htf_zone_type",
+    "liquidity_sweep_confirmed",
+    "order_block_present",
+    "sl",
+    "smt_divergence_present",
+    "strategy_key",
+    "timestamp",
+    "tp",
+    "trigger",
+    "htf_zone_touch",
+    "zone_touch",
+    "timeframe",
+    "is_test"
+  ]
+}

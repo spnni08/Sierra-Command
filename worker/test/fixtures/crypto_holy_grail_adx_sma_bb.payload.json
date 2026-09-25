@@ -1,0 +1,22 @@
+{
+  "strategy": "crypto_holy_grail_adx_sma_bb",
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "HOLY_GRAIL_LONG",
+  "timeframe": "15",
+  "price": 110300,
+  "adx": 29,
+  "adx_trending": true,
+  "bb_lower": 110200,
+  "bb_upper": 111800,
+  "entry_expiry_bars": 3,
+  "entry_trigger": 110300,
+  "pattern_bearish": false,
+  "pattern_bullish": true,
+  "pullback_zone": true,
+  "sl": 109900,
+  "sma20": 111000,
+  "timestamp": "1758700000000",
+  "is_test": 0
+}

@@ -169,6 +169,22 @@ jobs:
             echo "activity_log.user_agent already present — skipping."
           fi
 
+          echo "Probing trades.factor_state..."
+          set +e
+          npx wrangler d1 execute sierra-command-db --remote --command "SELECT factor_state FROM trades LIMIT 1" >/tmp/probe_trades_factor_state.log 2>&1
+          TRADES_FACTOR_STATE_PROBE=$?
+          set -e
+          if [ $TRADES_FACTOR_STATE_PROBE -ne 0 ]; then
+            echo "trades.factor_state/position_group_id missing — adding them (plain ADD COLUMN, nullable, no rebuild needed)."
+            npx wrangler d1 execute sierra-command-db --remote --command "
+              ALTER TABLE trades ADD COLUMN factor_state TEXT;
+              ALTER TABLE trades ADD COLUMN position_group_id TEXT;
+              CREATE INDEX IF NOT EXISTS idx_trades_position_group_id ON trades(position_group_id);
+            "
+          else
+            echo "trades.factor_state already present — skipping."
+          fi
+
           echo "Probing backtest_session_breakdown.session CHECK constraint..."
           # SQLite can't ALTER a CHECK constraint in place, so a plain
           # column-presence probe (as used above) doesn't apply here — the

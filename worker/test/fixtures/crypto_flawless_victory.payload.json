@@ -1,0 +1,15 @@
+{
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "BB_BUY_1",
+  "version": "v1",
+  "timeframe": "15",
+  "price": 110900,
+  "rsi": 33,
+  "mfi": 22,
+  "htf_filter_active": false,
+  "htf_filter_passed": true,
+  "timestamp": "1758700000000",
+  "is_test": 0
+}

@@ -1,0 +1,24 @@
+{
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "timeframe": "5",
+  "price": 110600,
+  "liquidity_sweep": true,
+  "choch_confirmed": true,
+  "entry_close_in_zone": true,
+  "confluence_min_ok": true,
+  "confluence_count": 2,
+  "confluence_factors": [
+    "ifvg",
+    "order_block"
+  ],
+  "min_rr_ok": true,
+  "not_invalidated": true,
+  "slPrice": 109900,
+  "tpPrice": 112000,
+  "swept_level_type": "asia_low",
+  "swept_level_price": 109750,
+  "sweep_time": "1758700000000",
+  "choch_time": "1758700300000",
+  "is_test": 0
+}

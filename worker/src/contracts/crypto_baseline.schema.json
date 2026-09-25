@@ -1,0 +1,19 @@
+{
+  "strategyId": "crypto_baseline",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "action",
+    "trigger",
+    "rsi",
+    "ema50",
+    "ema200",
+    "trend",
+    "timestamp",
+    "timeframe",
+    "is_test"
+  ]
+}

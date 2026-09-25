@@ -1,0 +1,23 @@
+{
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "bos_confirmed": true,
+  "choch_confirmed": true,
+  "confirmations_count": 3,
+  "timeframe": "15",
+  "equilibrium_position": "discount",
+  "fvg_present": true,
+  "htf_zone_type": "demand",
+  "liquidity_sweep_confirmed": true,
+  "order_block_present": true,
+  "price": 110600,
+  "sl": 109500,
+  "smt_divergence_present": false,
+  "strategy": "crypto_ict_smc",
+  "strategy_key": "crypto_ict_smc",
+  "timestamp": "1758700000000",
+  "tp": 112800,
+  "trigger": "BOS_ZONE_CONFLUENCE",
+  "is_test": 0
+}

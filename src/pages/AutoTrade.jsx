@@ -85,16 +85,28 @@ function StrategyCard({ st, onToggle, onRisk, onSession, onCorr, onNews }) {
         <button onClick={onSession} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '3px 9px', border: '1px solid var(--line2)', background: 'var(--panel3)', color: 'var(--txt)', cursor: 'pointer' }}>{SESSIONS[st.sessionIdx]}</button>
       </div>
 
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Korrelationsgrenze/News-Filter: gespeichert (strategy_settings.
+          correlation_limit/news_filter_threshold), aber vom Risk-Engine
+          (worker/src/risk/riskEngine.js) bewusst NICHT ausgewertet — siehe
+          dessen Kopf-Kommentar zur 2026-09-25-Entscheidung. Ausgegraut statt
+          entfernt, damit die gespeicherten Werte nicht verloren gehen, falls
+          diese Regeln später doch noch gebaut werden. */}
+      <div
+        title="Noch nicht aktiv — wird derzeit von keiner Risiko-Regel ausgewertet"
+        style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6, opacity: 0.4 }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
-          <div style={{ flex: 1, color: 'var(--txt2)' }}>Korrelationsgrenze (ρ)</div><div>{Number(st.corr ?? 0.8).toFixed(2)}</div>
+          <div style={{ flex: 1, color: 'var(--txt2)' }}>Korrelationsgrenze (ρ) · noch nicht aktiv</div><div>{Number(st.corr ?? 0.8).toFixed(2)}</div>
         </div>
-        <input type="range" min="0.5" max="1" step="0.05" value={st.corr} onChange={onCorr} style={{ width: '100%', accentColor: 'var(--acc)', height: 14 }} />
+        <input type="range" min="0.5" max="1" step="0.05" value={st.corr} onChange={onCorr} disabled style={{ width: '100%', accentColor: 'var(--acc)', height: 14, cursor: 'not-allowed' }} />
       </div>
 
-      <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ flex: 1, color: 'var(--txt2)', fontSize: 11 }}>News-Filter-Schwelle</div>
-        <button onClick={onNews} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '3px 9px', border: '1px solid var(--line2)', background: 'var(--panel3)', color: 'var(--txt)', cursor: 'pointer' }}>{NEWSLV[st.newsIdx]}</button>
+      <div
+        title="Noch nicht aktiv — wird derzeit von keiner Risiko-Regel ausgewertet"
+        style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, opacity: 0.4 }}
+      >
+        <div style={{ flex: 1, color: 'var(--txt2)', fontSize: 11 }}>News-Filter-Schwelle · noch nicht aktiv</div>
+        <button onClick={onNews} disabled style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '3px 9px', border: '1px solid var(--line2)', background: 'var(--panel3)', color: 'var(--txt)', cursor: 'not-allowed' }}>{NEWSLV[st.newsIdx]}</button>
       </div>
     </div>
   );

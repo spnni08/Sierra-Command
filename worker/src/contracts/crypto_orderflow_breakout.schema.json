@@ -1,0 +1,23 @@
+{
+  "strategyId": "crypto_orderflow_breakout",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "rsi",
+    "rsi9",
+    "ema50",
+    "ema200",
+    "range_high",
+    "range_low",
+    "candle_volume",
+    "avg_volume",
+    "range_n",
+    "trigger",
+    "action",
+    "timeframe",
+    "is_test"
+  ]
+}

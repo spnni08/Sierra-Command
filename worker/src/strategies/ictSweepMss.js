@@ -31,13 +31,17 @@ export const params = {
 export const trailingStop = { enabled: true, atrMult: null, atrLen: 14, anchor: 'swing_point_breakeven_then_trail' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. No TradingView alert script
+// exists yet for ict_sweep_mss (see worker README's alert-URL table) — these
+// declarations are the forward-looking contract for whoever writes one,
+// not evidence of current drift.
 const factors = [
-  { name: 'liquidity_sweep', check: (s) => !!s.liquidity_sweep },
-  { name: 'displacement', check: (s) => !!s.displacement },
-  { name: 'mss', check: (s) => !!s.mss },
-  { name: 'fvg_present', check: (s) => !!s.fvg_present },
-  { name: 'min_rr_ok', check: (s) => !!s.min_rr_ok },
-  { name: 'htf_bias_ok', check: (s) => !!s.htf_bias_ok },
+  { name: 'liquidity_sweep', fields: ['liquidity_sweep'], check: (s) => !!s.liquidity_sweep },
+  { name: 'displacement', fields: ['displacement'], check: (s) => !!s.displacement },
+  { name: 'mss', fields: ['mss'], check: (s) => !!s.mss },
+  { name: 'fvg_present', fields: ['fvg_present'], check: (s) => !!s.fvg_present },
+  { name: 'min_rr_ok', fields: ['min_rr_ok'], check: (s) => !!s.min_rr_ok },
+  { name: 'htf_bias_ok', fields: ['htf_bias_ok'], check: (s) => !!s.htf_bias_ok },
   { name: 'direction_present', check: (s) => isLong(s) || isShort(s) },
 ];
 

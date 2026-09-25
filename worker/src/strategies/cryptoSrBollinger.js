@@ -19,9 +19,14 @@ export const assetClass = 'crypto';
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'bollinger_band_edge' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. crypto_sr_bollinger.pine's
+// current f_payload() never sends `low`/`high` at all (verified
+// 2026-09-25) — only bb_upper/bb_lower/bb_basis and the close price — so
+// `band_bounce_trigger` is expected to always land in `missing`.
 const factors = [
   {
     name: 'band_bounce_trigger',
+    fields: ['low', 'high'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const low = num(s.low);
@@ -40,6 +45,7 @@ const factors = [
   },
   {
     name: 'ema200_trend_context',
+    fields: ['ema200'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const ema = num(s.ema200);

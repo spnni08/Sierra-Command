@@ -1,29 +1,34 @@
-// Signal ingestion for the 22 WAVESCOUT strategies ported into
+// Signal ingestion for the 26 Sierra Command strategies in
 // worker/src/strategies/. Mirrors spnni08/tradingview-bot's per-strategy
-// /webhook/<slug> pattern (worker.js handleWebhookRequest + its
-// forcedStrategy routing): the strategy is taken from the URL, not a field
+// /webhook/<slug> pattern: the strategy is taken from the URL, not a field
 // in the payload, so a misconfigured payload can never get silently routed
 // to the wrong strategy's gate logic.
 //
-// Real production traffic now hits this endpoint (confirmed via activity_log/
-// trades — organic 5-minute-aligned timestamps, this worker's own
-// /webhook/<strategy_id> URL scheme). POST a signal payload (symbol,
-// direction, price, and whatever indicator fields that strategy's factor
-// checks read — rsi, ema200, etc.) to /webhook/<strategy-id> (any id from
-// worker/schema.sql's strategies table, base or "(SL)" variant, e.g.
-// /webhook/crypto_baseline or /webhook/crypto_baseline_sl) and get back the
-// AND-gate result.
+// --- 2026-09-25 decision: Pine's signal is the source of truth ---
+// A field-mapping audit against the *current* tradingview-bot Pine scripts
+// (not the versions Sierra Command's JS was originally ported from) found
+// most strategies' factor checks permanently failing on renamed/missing
+// payload fields — Pine already gates the signal hard before it ever calls
+// alert(), and Sierra Command was silently re-rejecting real signals against
+// a stale copy of that gate. So: `evaluateSignal()`'s matched/failed/missing
+// result is now informational only, stored per signal/trade for later
+// analysis (see strategies/shared.js's header comment) — it never blocks a
+// trade. The only thing that can still reject a payload outright is
+// `checkStructuralValidity` below (known strategy, symbol, direction,
+// price > 0, not a test signal) — everything past that point is either
+// opened or blocked by the risk engine (../risk/riskEngine.js), never by
+// re-deriving the strategy's own entry logic.
 //
 // Every call is recorded in activity_log (source/result, plus the caller's
-// User-Agent/CF-Connecting-IP — see logActivity below), same as WAVESCOUT's
-// webhook_log — so the Log page sees it live. A passing signal is stored in
-// `signals` (status='converted') and immediately opens a `trades` row; a
-// failing signal is still stored in `signals` (status='rejected', with the
-// matched/failed factor list) but no trade is created — WAVESCOUT's
-// skip/reject pattern, just using this schema's existing signals.status enum
-// instead of a separate skip log.
+// User-Agent/CF-Connecting-IP — see logActivity below) — so the Log page
+// sees it live. A structurally invalid payload gets no `signals` row at all
+// (it never became a real signal); a structurally valid one always gets a
+// `signals` row with status='converted' (accepted) — whether a `trades` row
+// also exists depends only on the risk engine, see below.
 import { evaluateSignal, getStrategy } from '../strategies/index.js';
 import { DEFAULT_EXIT } from '../strategies/shared.js';
+import { checkRiskRules, checkSessionFilter, describeRiskRejection } from '../risk/riskEngine.js';
+import { berlinDateParts, berlinDayRangeUtc } from '../lib/berlinDay.js';
 
 export async function handleWebhookRoute(request, url, env) {
   const match = url.pathname.match(/^\/webhook\/([a-zA-Z0-9_-]+)$/);
@@ -92,63 +97,145 @@ function checkWebhookSecret(payload, env) {
   return { ok: true };
 }
 
-// Builds the {sl, tp} bracket for one strategy variant's exit config, given
-// an already-validated entry price and direction. Shared by the fixed leg
-// and the trailing-SL fan-out leg below — see the slPct/rMultiple comment
-// further down for why trailing variants bootstrap off DEFAULT_EXIT.slPct.
-//
-// exit.mode === 'levels' (ict_sweep_mss, sc_keylevel_sweep) means SL/TP are
-// structure-derived, not a %/ATR bracket — the strategy's own adapter/Pine
-// script already computed them and sent them as payload.slPrice/tpPrice.
-// Previously this branch fell straight through to the generic %-bracket
-// below, silently discarding those payload values on every live trade for
-// any 'levels'-mode strategy — a real fidelity bug (caught while wiring
-// sc_keylevel_sweep, which genuinely needs its SL behind the sweep extreme
-// and its TP at the next key level, not a generic 1%/1.5R guess). Falls
-// back to the generic bracket only if the payload is missing/invalid
-// numbers, so a Pine script that forgets to send them still opens a trade
-// with a sane stop instead of being rejected outright.
-function computeBracket(exit, direction, entry, payload) {
-  // 'levels_trailing' (the "_sl" twin of a 'levels'-mode strategy, e.g.
-  // ict_sweep_mss_sl) starts from the exact same structural levels — its
-  // trailing management only changes how the stop moves AFTER entry, never
-  // the initial SL/TP (see index.js's registration comment for that pair).
-  if (exit.mode === 'levels' || exit.mode === 'levels_trailing') {
-    const sl = Number(payload?.slPrice);
-    const tp = Number(payload?.tpPrice);
-    if (Number.isFinite(sl) && Number.isFinite(tp)) return { sl, tp };
+// A signal is "structurally valid" — the only bar that can still reject a
+// payload outright, per the 2026-09-25 decision above — when: the strategy
+// id in the URL is known, direction is long/short, symbol is non-empty,
+// price is a finite number > 0, and it isn't explicitly flagged as a test
+// signal. Everything else (the strategy's own entry logic) is Pine's call,
+// not re-checked here.
+function isTestSignal(payload) {
+  const v = payload?.is_test;
+  return v === true || v === 1 || v === '1' || v === 'true';
+}
+
+function checkStructuralValidity(strategyKey, payload) {
+  const strategy = getStrategy(strategyKey);
+  if (!strategy) return { ok: false, reason: 'unknown_strategy' };
+
+  const direction = String(payload?.direction ?? '').toLowerCase();
+  if (direction !== 'long' && direction !== 'short') return { ok: false, reason: 'invalid_direction' };
+
+  const symbol = String(payload?.symbol ?? '').toUpperCase();
+  if (!symbol) return { ok: false, reason: 'missing_symbol' };
+
+  const price = Number(payload?.price ?? payload?.close);
+  if (!Number.isFinite(price) || price <= 0) return { ok: false, reason: 'invalid_price' };
+
+  if (isTestSignal(payload)) return { ok: false, reason: 'test_signal' };
+
+  return { ok: true, strategy, direction, symbol, price };
+}
+
+const STRUCTURAL_REJECTION_MESSAGES = {
+  unknown_strategy: (strategyKey) => `Webhook /webhook/${strategyKey}: unbekannte Strategie`,
+  invalid_direction: (strategyKey) => `Webhook /webhook/${strategyKey}: fehlende oder ungültige direction`,
+  missing_symbol: (strategyKey) => `Webhook /webhook/${strategyKey}: fehlendes symbol`,
+  invalid_price: (strategyKey) => `Webhook /webhook/${strategyKey}: kein gültiger Preis (> 0) im Payload`,
+  test_signal: (strategyKey) => `Webhook /webhook/${strategyKey}: is_test-Signal ignoriert`,
+};
+
+const STRUCTURAL_REJECTION_STATUS = {
+  unknown_strategy: 404,
+  invalid_direction: 400,
+  missing_symbol: 400,
+  invalid_price: 400,
+  test_signal: 200, // a real request, deliberately not processed — not an error
+};
+
+// Prefers the payload's own stop_loss/sl/tp (or the 'levels'-mode slPrice/
+// tpPrice) over the generic %/ATR bracket, per field, independently — a
+// strategy that sends `sl` but not `tp` gets its SL from the payload and
+// its TP computed, not all-or-nothing. `null` in the payload (e.g.
+// crypto_sr_bollinger's stop_loss when its adaptive-stop toggle is off)
+// counts as "not sent", falling through to the computed value. See this
+// module's header for the per-strategy "where does SL/TP come from" table
+// (also in the PR description).
+function firstFiniteNumber(...values) {
+  for (const v of values) {
+    if (v === null || v === undefined) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
   }
+  return null;
+}
+
+function resolveBracket(exit, direction, entry, payload) {
+  const payloadSl = firstFiniteNumber(payload?.stop_loss, payload?.sl, payload?.slPrice);
+  const payloadTp = firstFiniteNumber(payload?.tp, payload?.tpPrice);
+
   const slPct = exit.mode === 'fixed' ? exit.slPct : DEFAULT_EXIT.slPct;
   const rMultiple = exit.tp2RMultiple ?? DEFAULT_EXIT.tp2RMultiple;
   const slDistance = entry * (slPct / 100);
-  const sl = direction === 'long' ? entry - slDistance : entry + slDistance;
-  const tp = direction === 'long' ? entry + slDistance * rMultiple : entry - slDistance * rMultiple;
-  return { sl, tp };
+  const computedSl = direction === 'long' ? entry - slDistance : entry + slDistance;
+  const computedTp = direction === 'long' ? entry + slDistance * rMultiple : entry - slDistance * rMultiple;
+
+  return {
+    sl: payloadSl ?? computedSl,
+    tp: payloadTp ?? computedTp,
+    slSource: payloadSl != null ? 'payload' : 'computed',
+    tpSource: payloadTp != null ? 'payload' : 'computed',
+  };
 }
 
 // signals.exit_mode/trades.exit_mode are CHECK-constrained to
 // ('fixed','trailing') only (schema.sql) — a narrower set than the real
-// exit.mode values the strategy registry actually uses (also 'signal',
-// 'signal_or_sltp', 'levels', 'levels_trailing' — see strategies/index.js's
-// crypto_flawless_victory_v2/v3 and ict_sweep_mss/_sl registrations, and now
-// sc_keylevel_sweep). Binding the raw mode string here would violate that
-// CHECK on every webhook call to any of those strategies (caught while
-// wiring sc_keylevel_sweep — this affects ict_sweep_mss and
-// crypto_flawless_victory just as much, they just never received a real
-// webhook call yet). Rather than widen the CHECK (a same-day rebuild of two
-// FK-linked tables, signals <- trades <- activity_log, for a column that
-// nothing downstream reads at finer granularity than this), every mode maps
+// exit.mode values the strategy registry actually uses. Every mode maps
 // onto the semantic bucket the rest of the app already expects: 'trailing'
-// for anything whose SL is meant to move (checkOpenTrades.js's evaluateExit
-// only ever checks `exit_mode === 'trailing'` to pick the close-reason
-// label, 'trailing_stop' vs 'sl' — never a finer-grained mode), 'fixed' for
-// everything else (a static bracket, whether %-based or structure-derived).
-// The full-detail mode ('levels', 'signal', ...) never needs to survive
-// past this function — every other consumer of a strategy's exit config
-// reads it straight from the registry (strategy.exit.mode), never from this
-// persisted column.
+// for anything whose SL is meant to move, 'fixed' for everything else. See
+// checkOpenTrades.js's evaluateExit, which only ever reads this bucket.
 function dbExitMode(mode) {
   return mode === 'trailing' || mode === 'levels_trailing' ? 'trailing' : 'fixed';
+}
+
+function todayBerlinRange() {
+  const today = berlinDateParts();
+  const dateStr = `${today.year}-${String(today.month).padStart(2, '0')}-${String(today.day).padStart(2, '0')}`;
+  return berlinDayRangeUtc(dateStr);
+}
+
+// Logs "Payload-Feld X fehlt" once per (strategy, field) per Europe/Berlin
+// calendar day — so a future re-drift between a Pine script and this
+// strategy's `fields` declarations (strategies/shared.js) surfaces on its
+// own instead of silently sitting in `missing` telemetry nobody looks at.
+// Checked via an exact-message lookup against today's activity_log rows
+// (deterministic message string, no LIKE/injection concerns) rather than a
+// separate "already warned" table — activity_log is already the audit trail
+// for everything webhook-related.
+async function warnMissingFieldsOncePerDay(env, strategyKey, missing) {
+  if (!missing || missing.length === 0) return;
+  const fields = [...new Set(missing.flatMap((m) => m.fields))];
+  if (fields.length === 0) return;
+
+  const { startUtc, endUtc } = todayBerlinRange();
+  for (const field of fields) {
+    const message = `Payload-Feld "${field}" fehlt für ${strategyKey} (Faktor-Telemetrie unvollständig, Pine/Sierra ausgetauscht?)`;
+    const existing = await env.DB.prepare(
+      `SELECT 1 FROM activity_log WHERE source = 'system' AND message = ? AND timestamp >= ? AND timestamp < ? LIMIT 1`
+    )
+      .bind(message, startUtc, endUtc)
+      .first();
+    if (!existing) {
+      await logActivity(env, 'system', message);
+    }
+  }
+}
+
+async function getStrategyRiskContext(env, strategyKey) {
+  const row = await env.DB.prepare(
+    `SELECT s.active AS active, ss.session_filter AS session_filter
+     FROM strategies s
+     LEFT JOIN strategy_settings ss ON ss.strategy_id = s.id
+     WHERE s.id = ?`
+  )
+    .bind(strategyKey)
+    .first();
+  let sessionFilter = [];
+  try {
+    sessionFilter = row?.session_filter ? JSON.parse(row.session_filter) : [];
+  } catch {
+    sessionFilter = [];
+  }
+  return { active: !!(row?.active ?? 1), sessionFilter };
 }
 
 async function processWebhook(request, env, strategyKey) {
@@ -163,10 +250,7 @@ async function processWebhook(request, env, strategyKey) {
   // still gets exactly one log row (below) documenting why, but never opens
   // a signal or trade. WEBHOOK_SECRET_ENFORCED gates whether a bad/missing
   // secret actually blocks the request (401) or only logs a warning and lets
-  // processing continue — see wrangler.toml's rollout comment: this lets
-  // every existing TradingView alert keep firing while they're migrated to
-  // include "secret", instead of losing signals the moment WEBHOOK_SECRET is
-  // set.
+  // processing continue — see wrangler.toml's rollout comment.
   const secretCheck = checkWebhookSecret(payload, env);
   if (!secretCheck.ok) {
     const enforced = env.WEBHOOK_SECRET_ENFORCED === 'true';
@@ -181,157 +265,133 @@ async function processWebhook(request, env, strategyKey) {
     }
   }
 
-  const strategy = getStrategy(strategyKey);
-  if (!strategy) {
-    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: unbekannte Strategie`, request);
-    return Response.json({ error: 'unknown_strategy', strategyKey }, { status: 404 });
+  const structural = checkStructuralValidity(strategyKey, payload);
+  if (!structural.ok) {
+    await logActivity(env, 'system', STRUCTURAL_REJECTION_MESSAGES[structural.reason](strategyKey), request);
+    return Response.json(
+      { error: structural.reason, strategyKey },
+      { status: STRUCTURAL_REJECTION_STATUS[structural.reason] }
+    );
   }
+  const { strategy, direction, symbol, price: entry } = structural;
 
   // Fan-out: a hit on a fixed-variant key (exit.mode === 'fixed') also opens
   // the paired trailing-SL ("_sl") trade, mirroring WAVESCOUT's "one alert,
-  // both variants" behavior — see worker/src/strategies/index.js's
-  // buildRegistry() for how `<key>` and `<key>_sl` share the same evaluate()
-  // and only differ in exit config. crypto_flawless_victory v1 is naturally
-  // excluded here since its base exit.mode is 'signal', not 'fixed' (see
-  // cryptoFlawlessVictory.js's signalOnlyExit); v2/v3 are excluded because
-  // they're registered as their own standalone keys with no "_sl" pair at
-  // all. A direct hit on a "_sl" key itself (exit.mode === 'trailing') never
-  // fans out — that's the legacy/manual path, kept working unchanged for
-  // backwards compatibility with any alert still pointed straight at it.
+  // both variants" behavior — see strategies/index.js's buildRegistry().
+  // crypto_flawless_victory v1 is naturally excluded (base exit.mode is
+  // 'signal'); v2/v3 have no "_sl" pair at all. A direct hit on a "_sl" key
+  // itself never fans out.
   const slKey = `${strategyKey}_sl`;
   const slStrategy = strategy.exit.mode === 'fixed' ? getStrategy(slKey) : null;
 
-  const direction = String(payload?.direction ?? '').toLowerCase();
-  if (direction !== 'long' && direction !== 'short') {
-    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlende oder ungültige direction`, request);
-    return Response.json({ error: 'invalid_direction', message: 'expected direction: "long" or "short"' }, { status: 400 });
-  }
-
-  const symbol = String(payload?.symbol ?? '').toUpperCase();
-  if (!symbol) {
-    await logActivity(env, 'system', `Webhook /webhook/${strategyKey}: fehlendes symbol`, request);
-    return Response.json({ error: 'missing_symbol' }, { status: 400 });
-  }
-
   // Read verbatim, never inferred — see schema.sql's trades.timeframe
-  // comment. TradingView's {{interval}} macro sends raw codes ('15','240',
-  // 'D',...); stored exactly as received, normalized only at query time
-  // (stats/computeStats.js's normalizeTimeframe), not here.
+  // comment.
   const timeframe = typeof payload?.timeframe === 'string' && payload.timeframe.trim() ? payload.timeframe.trim() : null;
 
-  // The entry condition (the AND-gated factor chain) is identical between a
-  // base strategy and its "_sl" variant — only the exit config differs (see
-  // index.js's buildRegistry comment) — so one evaluate() call covers both
-  // legs of the fan-out; there's no separate "_sl" evaluation to run.
+  // Factor telemetry — informational only as of 2026-09-25 (see this file's
+  // header comment and strategies/shared.js). Computed once, shared by both
+  // legs of the fan-out (same entry condition, same payload).
   const result = evaluateSignal(strategyKey, payload);
   const matched = result.matched ?? [];
   const failed = result.failed ?? [];
-  const score = matched.length + failed.length > 0 ? matched.length / (matched.length + failed.length) : 0;
-  const factorState = JSON.stringify({ matched, failed });
+  const missing = result.missing ?? [];
+  const legacyPassed = result.legacyPassed ?? false;
+  const factorState = JSON.stringify({ matched, failed, missing, legacyPassed });
+  await warnMissingFieldsOncePerDay(env, strategyKey, missing);
+
   const signalId = makeId(`sig-${strategyKey}`);
   const ts = nowSql();
 
+  // A structurally valid signal is always accepted (status='converted') —
+  // there is no more "rejected" outcome past this point; whether a trade
+  // also opens depends only on the risk engine below.
   await env.DB.prepare(
     `INSERT INTO signals (id, strategy_id, symbol, timestamp, score, factor_state, status, exit_mode, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, 'converted', ?, ?)`
   )
-    .bind(signalId, strategyKey, symbol, ts, score, factorState, result.passed ? 'converted' : 'rejected', dbExitMode(strategy.exit.mode), ts)
+    .bind(signalId, strategyKey, symbol, ts, legacyPassed ? 1 : 0, factorState, dbExitMode(strategy.exit.mode), ts)
     .run();
 
-  if (!result.passed) {
+  // Risk gate — evaluated once for the whole signal (base + paired "(SL)"
+  // trade share this one decision, per the 2026-09-25 "count as one
+  // position" rule). Uses the hit strategy's own active flag/session filter
+  // (base or "_sl", whichever the URL targeted) — see riskEngine.js's header.
+  const riskContext = await getStrategyRiskContext(env, strategyKey);
+  let risk = await checkRiskRules(env, { strategyActive: riskContext.active });
+  if (risk.ok) {
+    risk = checkSessionFilter(riskContext.sessionFilter);
+  }
+
+  if (!risk.ok) {
+    const reasonText = describeRiskRejection(risk);
     await logActivity(
       env,
       'system',
-      `Webhook /webhook/${strategyKey} ${symbol}: Signal abgelehnt (fehlgeschlagen: ${failed.join(', ') || 'unbekannt'})`,
+      `Webhook /webhook/${strategyKey} ${symbol}: Signal angenommen, aber kein Trade — ${reasonText}`,
       request
     );
     return Response.json({
-      data: { passed: false, strategyKey, symbol, signalId, matched, failed },
+      data: {
+        accepted: true,
+        strategyKey,
+        symbol,
+        signalId,
+        matched,
+        failed,
+        missing,
+        legacyPassed,
+        trade: null,
+        pairedTrade: null,
+        riskBlocked: true,
+        riskReason: risk.reason,
+      },
     });
   }
 
-  // A passing fixed-variant signal also opens the paired "_sl" trade: same
-  // matched/failed factor result (same entry condition), a second `signals`
-  // row keyed by the "_sl" strategy id (status/exit_mode reflect that leg),
-  // and — if a price is available — a second `trades` row. No new schema
-  // column is needed to link the pair: each leg is its own normal
-  // signal+trade row, distinguishable by strategy_id/exit_mode and created
-  // in the same webhook call (same symbol/timestamp).
+  const volume = Number(payload.volume) > 0 ? Number(payload.volume) : 0.01;
+  const positionGroupId = makeId('pos');
+
+  const { sl, tp, slSource, tpSource } = resolveBracket(strategy.exit, direction, entry, payload);
+
+  const tradeId = makeId(`trd-${strategyKey}`);
+  await env.DB.prepare(
+    `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, factor_state, position_group_id, opened_at, closed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, ?, ?, NULL)`
+  )
+    .bind(tradeId, signalId, symbol, direction, entry, sl, tp, volume, dbExitMode(strategy.exit.mode), timeframe, factorState, positionGroupId, ts)
+    .run();
+
+  await logActivity(
+    env,
+    'binance',
+    `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (SL ${slSource}, TP ${tpSource})`,
+    request
+  );
+
   let pairedSignalId = null;
+  let pairedTrade = null;
   if (slStrategy) {
     pairedSignalId = makeId(`sig-${slKey}`);
     await env.DB.prepare(
       `INSERT INTO signals (id, strategy_id, symbol, timestamp, score, factor_state, status, exit_mode, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'converted', ?, ?)`
     )
-      .bind(pairedSignalId, slKey, symbol, ts, score, factorState, dbExitMode(slStrategy.exit.mode), ts)
+      .bind(pairedSignalId, slKey, symbol, ts, legacyPassed ? 1 : 0, factorState, dbExitMode(slStrategy.exit.mode), ts)
       .run();
-  }
 
-  const entry = Number(payload.price ?? payload.close);
-  if (!Number.isFinite(entry)) {
-    await logActivity(
-      env,
-      'system',
-      `Webhook /webhook/${strategyKey} ${symbol}: Signal bestätigt, aber kein gültiger Preis im Payload → kein Trade`,
-      request
-    );
-    return Response.json({
-      data: {
-        passed: true,
-        strategyKey,
-        symbol,
-        signalId,
-        matched,
-        failed,
-        trade: null,
-        pairedTrade: null,
-        reason: 'missing_price',
-      },
-    });
-  }
-
-  const volume = Number(payload.volume) > 0 ? Number(payload.volume) : 0.01;
-
-  // Fixed-exit strategies carry their own slPct/tp2RMultiple. Trailing
-  // ("(SL)") variants don't have a %SL — their SL is meant to trail a
-  // per-strategy anchor (ATR/S&R/Bollinger/Kumo/swing point) instead, which
-  // isn't computed here (that's the trailing-anchor engine, out of scope for
-  // this endpoint). DEFAULT_EXIT.slPct is used as the initial bootstrap SL
-  // so the trade still opens with a sane stop; a later trailing-update step
-  // is expected to move it.
-  const { sl, tp } = computeBracket(strategy.exit, direction, entry, payload);
-
-  const tradeId = makeId(`trd-${strategyKey}`);
-  await env.DB.prepare(
-    `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, opened_at, closed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, NULL)`
-  )
-    .bind(tradeId, signalId, symbol, direction, entry, sl, tp, volume, dbExitMode(strategy.exit.mode), timeframe, ts)
-    .run();
-
-  await logActivity(
-    env,
-    'binance',
-    `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (fixed)`,
-    request
-  );
-
-  let pairedTrade = null;
-  if (slStrategy && pairedSignalId) {
-    const { sl: pairedSl, tp: pairedTp } = computeBracket(slStrategy.exit, direction, entry, payload);
+    const paired = resolveBracket(slStrategy.exit, direction, entry, payload);
     const pairedTradeId = makeId(`trd-${slKey}`);
     await env.DB.prepare(
-      `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, opened_at, closed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, NULL)`
+      `INSERT INTO trades (id, signal_id, symbol, direction, entry, sl, tp, volume, source, status, pnl, exit_mode, timeframe, factor_state, position_group_id, opened_at, closed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'binance_testnet', 'open', NULL, ?, ?, ?, ?, ?, NULL)`
     )
-      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, pairedSl, pairedTp, volume, dbExitMode(slStrategy.exit.mode), timeframe, ts)
+      .bind(pairedTradeId, pairedSignalId, symbol, direction, entry, paired.sl, paired.tp, volume, dbExitMode(slStrategy.exit.mode), timeframe, factorState, positionGroupId, ts)
       .run();
 
     await logActivity(
       env,
       'binance',
-      `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (paired ${slKey}, trailing)`,
+      `Webhook /webhook/${strategyKey} ${symbol} ${direction.toUpperCase()} ${volume} eröffnet @ ${entry} (paired ${slKey}, trailing, SL ${paired.slSource}, TP ${paired.tpSource})`,
       request
     );
 
@@ -341,6 +401,18 @@ async function processWebhook(request, env, strategyKey) {
   const trade = await env.DB.prepare('SELECT * FROM trades WHERE id = ?').bind(tradeId).first();
 
   return Response.json({
-    data: { passed: true, strategyKey, symbol, signalId, matched, failed, trade, pairedTrade },
+    data: {
+      accepted: true,
+      strategyKey,
+      symbol,
+      signalId,
+      matched,
+      failed,
+      missing,
+      legacyPassed,
+      trade,
+      pairedTrade,
+      riskBlocked: false,
+    },
   });
 }

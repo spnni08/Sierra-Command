@@ -20,9 +20,16 @@ export const params = {
 export const trailingStop = { enabled: true, atrMult: 1.5, atrLen: 14, anchor: 'atr' };
 export const exit = {};
 
+// `fields` per shared.js's header comment. crypto_holy_grail_adx_sma_bb.pine
+// never sends `low`/`high` (so `sma_bb_pullback_zone` is expected in
+// `missing` even though Pine already computes and sends the equivalent
+// `pullback_zone` boolean under a name this factor doesn't read), and sends
+// `pattern_bullish`/`pattern_bearish` instead of `candle_pattern_hammer`/
+// `_engulfing`/`_doji`/`candle_pattern` — verified 2026-09-25.
 const factors = [
   {
     name: 'adx_trending',
+    fields: ['adx'],
     check: (s) => {
       const adx = num(s.adx);
       return Number.isFinite(adx) && adx > params.ADX_MIN;
@@ -30,6 +37,7 @@ const factors = [
   },
   {
     name: 'sma_bb_pullback_zone',
+    fields: ['low', 'high'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const low = num(s.low);
@@ -48,6 +56,7 @@ const factors = [
   },
   {
     name: 'candle_pattern_confirm',
+    fields: ['candle_pattern_hammer'],
     check: (s) => !!(s.candle_pattern_hammer || s.candle_pattern_engulfing || s.candle_pattern_doji || s.candle_pattern),
   },
 ];

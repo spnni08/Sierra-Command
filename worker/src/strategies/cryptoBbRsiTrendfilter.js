@@ -28,6 +28,7 @@ export const exit = {};
 const factors = [
   {
     name: 'bb_trend_filter',
+    fields: ['bb_upper', 'bb_lower'],
     check: (s) => {
       const close = num(s.close ?? s.price);
       const bbUpper = num(s.bb_upper);

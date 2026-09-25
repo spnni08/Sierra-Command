@@ -1,0 +1,18 @@
+{
+  "strategy": "crypto_sr_bollinger",
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "BB_LOWER_BOUNCE",
+  "timeframe": "5",
+  "price": 110600,
+  "rsi": 38,
+  "ema200": 109800,
+  "bb_upper": 112000,
+  "bb_lower": 110500,
+  "bb_basis": 111200,
+  "adaptive_stop_active": false,
+  "stop_loss": null,
+  "timestamp": "1758700000000",
+  "is_test": 0
+}

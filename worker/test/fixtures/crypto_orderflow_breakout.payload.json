@@ -1,0 +1,18 @@
+{
+  "symbol": "BTCUSDT",
+  "direction": "long",
+  "action": "BUY",
+  "trigger": "RANGE_BREAK_UP",
+  "timeframe": "15",
+  "price": 111500,
+  "rsi": 55,
+  "rsi9": 60,
+  "ema50": 110900,
+  "ema200": 109800,
+  "range_high": 111300,
+  "range_low": 108700,
+  "candle_volume": 2200,
+  "avg_volume": 1000,
+  "range_n": 20,
+  "is_test": 0
+}

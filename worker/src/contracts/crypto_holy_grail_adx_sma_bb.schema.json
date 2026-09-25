@@ -1,0 +1,32 @@
+{
+  "strategyId": "crypto_holy_grail_adx_sma_bb",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "adx",
+    "adx_trending",
+    "bb_lower",
+    "bb_upper",
+    "entry_expiry_bars",
+    "entry_trigger",
+    "pattern_bearish",
+    "pattern_bullish",
+    "pullback_zone",
+    "sl",
+    "sma20",
+    "action",
+    "trigger",
+    "timestamp",
+    "low",
+    "high",
+    "candle_pattern_hammer",
+    "candle_pattern_engulfing",
+    "candle_pattern_doji",
+    "candle_pattern",
+    "timeframe",
+    "is_test"
+  ]
+}
