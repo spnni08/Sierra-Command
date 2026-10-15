@@ -7,26 +7,16 @@ import { useFetch } from '../api/useFetch';
 import { useLiveTradePnl } from '../api/useLiveTradePnl';
 import { pnlDisplay, fmtPnlNum } from '../lib/pnlFormat';
 import { normalizeSymbol } from '../lib/symbols';
+import { BACKTEST_ADAPTER_STATUS } from '../lib/backtestAdapters';
 import StatusPanel from '../api/StatusPanel';
 import ErrorBoundary from '../components/ErrorBoundary';
 
 // Strategy IDs with a real or partial indicator adapter in
 // worker/src/backtest/adapters.js — only these can actually produce a
-// backtest today (see that file's header comment for exactly why the other
-// 5 base strategies can't). There's no API endpoint exposing this yet, so
-// it's mirrored here by hand; keep in sync with adapters.js's ADAPTERS map
-// whenever a new adapter is added.
-const BACKTESTABLE_STRATEGY_IDS = new Set([
-  'crypto_baseline', 'crypto_baseline_sl',
-  'crypto_bb_rsi_trendfilter', 'crypto_bb_rsi_trendfilter_sl',
-  'crypto_orderflow_breakout', 'crypto_orderflow_breakout_sl',
-  'crypto_ichimoku_breakout', 'crypto_ichimoku_breakout_sl',
-  'crypto_sr_exclusion', 'crypto_sr_exclusion_sl',
-  'crypto_sr_bollinger', 'crypto_sr_bollinger_sl', // partial adapter — flagged via the run response's partialAdapter field, not here
-  'crypto_mfi_engulfing', 'crypto_mfi_engulfing_sl', // partial adapter (real /ohlc candles, but this backtest's own engulfing-pattern geometry — see adapters.js)
-  'crypto_holy_grail_adx_sma_bb', 'crypto_holy_grail_adx_sma_bb_sl', // partial adapter (real /ohlc candles + wick-touch, but this backtest's own hammer/doji/engulfing geometry — see adapters.js)
-  'ict_sweep_mss', 'ict_sweep_mss_sl', // partial adapter — crypto legs run on CoinGecko's coarsest real O/H/L/C, not the strategy's nominal 15m (see adapters.js's ICT_SWEEP_MSS_CAVEAT); forex/index legs run on real Twelve Data 15m candles
-]);
+// backtest. The status map lives in lib/backtestAdapters.js (kept in sync
+// with the worker by a test); 'partial' ones are marked in the picker and
+// carry their simplification text in the run response's partialAdapter.
+const BACKTESTABLE_STRATEGY_IDS = new Set(Object.keys(BACKTEST_ADAPTER_STATUS));
 
 // Default symbol choices for a strategy with no explicit asset_classes (every
 // strategy above ict_sweep_mss). ict_sweep_mss/_sl instead offer the
@@ -51,6 +41,12 @@ function describeBacktestError(body) {
   }
   if (body?.error === 'insufficient_candle_history') {
     return message || 'Nicht genug Kerzenhistorie für den Indikator-Warmup.';
+  }
+  if (body?.error === 'resolution_too_coarse') {
+    return `Zeitraum gesperrt: ${message}`;
+  }
+  if (body?.error === 'unsupported_asset_class') {
+    return `Für dieses Asset gesperrt: ${message}`;
   }
   if (body?.error === 'unknown_strategy') {
     return 'Unbekannte Strategie-ID.';
@@ -413,7 +409,7 @@ export default function ProTerminal() {
           >
             {backtestableStrategies.length === 0 && <option value="">— keine Strategien geladen —</option>}
             {backtestableStrategies.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
+              <option key={s.id} value={s.id}>{s.name} ({s.id}){BACKTEST_ADAPTER_STATUS[s.id] === 'partial' ? ' — teilweise' : ''}</option>
             ))}
             {nonBacktestableStrategies.length > 0 && (
               <optgroup label="Noch kein Adapter — Backtest nicht möglich">
@@ -444,6 +440,9 @@ export default function ProTerminal() {
             </button>
           </div>
 
+          {selectedIsBacktestable && BACKTEST_ADAPTER_STATUS[effectiveStrategyId] === 'partial' && (
+            <div style={{ color: 'var(--txt3)' }}>Teilweise adaptiert — Vereinfachungen werden nach dem Lauf angezeigt.</div>
+          )}
           {!selectedIsBacktestable && effectiveStrategyId && (
             <div style={{ color: 'var(--txt3)' }}>Für diese Strategie ist noch kein Indikator-Adapter vorhanden — Backtesting ist dafür (noch) nicht möglich.</div>
           )}
@@ -466,7 +465,7 @@ export default function ProTerminal() {
         )}
         {!btLoading && manualRun?.partialAdapter && (
           <div style={{ padding: '10px 9px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--txt2)', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
-            ⚠ Vereinfachter Adapter: {manualRun.partialAdapter}
+            ⚠ Vereinfachter Adapter{manualRun.candleTimeframe ? ` (Kerzen: ${manualRun.candleTimeframe})` : ''}: {manualRun.partialAdapter}
           </div>
         )}
         {!btLoading && manualRun?.window?.apiLimited && (

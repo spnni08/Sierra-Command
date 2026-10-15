@@ -104,6 +104,15 @@ function ohlcBucketToTimeframe(bucket) {
   return '4d';
 }
 
+/**
+ * The candle interval fetchCryptoRealOhlcCandles will get back for a range —
+ * same span/bucket maths as that function, exported so engine.js can refuse a
+ * run BEFORE spending an API call (see adapters.js ADAPTER_CONSTRAINTS).
+ */
+export function cryptoOhlcTimeframeForRange(startDate, endDate) {
+  return ohlcBucketToTimeframe(pickOhlcDaysBucket(Math.max(1, daysBetween(startDate, endDate))));
+}
+
 // Real O/H/L/C candles for strategies whose factors need actual candle body/
 // wick geometry (engulfing patterns, wick-touch-inside-band criteria) —
 // crypto_mfi_engulfing and crypto_holy_grail_adx_sma_bb, see adapters.js.
