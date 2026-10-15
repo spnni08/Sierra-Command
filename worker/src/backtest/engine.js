@@ -9,8 +9,8 @@
 // backtestable yet (their factors gate on Pine-side semantic flags, not
 // plain OHLC-derived indicators, and CoinGecko's free OHLC has no volume).
 import { getStrategy } from '../strategies/index.js';
-import { getAdapter, PARTIAL_ADAPTERS, ADAPTER_WARMUP_BARS } from './adapters.js';
-import { fetchHistoricalCandles, assetClassFor, REAL_OHLC_STRATEGY_IDS } from './candles.js';
+import { getAdapter, PARTIAL_ADAPTERS, ADAPTER_WARMUP_BARS, checkAdapterConstraint } from './adapters.js';
+import { fetchHistoricalCandles, assetClassFor, REAL_OHLC_STRATEGY_IDS, cryptoOhlcTimeframeForRange } from './candles.js';
 import { resolveWindow } from './window.js';
 import { computeMetrics } from './metrics.js';
 import { computeSessionBreakdown } from './sessions.js';
@@ -148,6 +148,14 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
     }
   }
 
+  // Refuse locked asset-class / resolution combinations up front (no API
+  // call spent). The real-OHLC crypto interval is fully determined by the
+  // fetch range, so it can be predicted exactly; the post-fetch check below
+  // re-verifies it against what actually came back.
+  const preTimeframe = assetClass === 'crypto' && isRealOhlcStrategy ? cryptoOhlcTimeframeForRange(fetchStart, window.end) : null;
+  const preGate = checkAdapterConstraint(strategyId, assetClass, preTimeframe);
+  if (preGate) return { ...preGate, strategyId };
+
   let candles;
   let candleTimeframe;
   try {
@@ -155,6 +163,9 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
   } catch (err) {
     return { error: 'candle_fetch_failed', message: err.message };
   }
+
+  const postGate = checkAdapterConstraint(strategyId, assetClass, candleTimeframe);
+  if (postGate) return { ...postGate, strategyId };
 
   if (candles.length < warmupBars) {
     return {
@@ -461,6 +472,7 @@ export async function runBacktest({ strategyId, symbol, start, end }, env) {
       apiLimited, // true if clamped specifically by CoinGecko's 365-day free-tier cap, not the asset's minStartDate
     },
     candleCount: candles.length,
+    candleTimeframe,
     partialAdapter: PARTIAL_ADAPTERS[strategyId] ?? null,
     metrics,
     trades: trades.map((t) => ({

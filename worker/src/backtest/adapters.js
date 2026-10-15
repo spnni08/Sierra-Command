@@ -37,13 +37,13 @@
 //     srDynamicAdapter.js.
 //   - crypto_ict_smc used to be listed here too: BOS/CHoCH/order-block/FVG
 //     swing-structure detection needs real per-bar high/low, undetectable
-//     on flat /market_chart OHLC. buildCryptoIctSmc below implements it
-//     using real O/H/L/C from CoinGecko's /ohlc (fetchCryptoRealOhlcCandles,
-//     same source crypto_mfi_engulfing/crypto_holy_grail_adx_sma_bb use),
-//     porting the same swing/BOS/CHoCH/order-block/FVG algorithms validated
-//     by 40 passing tests in tradingview-bot/backtest/ict_smc/concepts.py.
-//     See ictSmcAdapter.js for exactly what's simplified (single-timeframe,
-//     no HTF zones/session gate/SMT divergence — see PARTIAL_ADAPTERS).
+//     on flat /market_chart OHLC. buildCryptoIctSmc below ports the live
+//     entry rules of tradingview-bot/pinescript/strategies/crypto_ict_smc.pine
+//     (swing/BOS-CHoCH, FVG + OB zones, BOS->zone retest window) on real
+//     O/H/L/C from CoinGecko's /ohlc (fetchCryptoRealOhlcCandles). See
+//     ictSmcAdapter.js and ICT_SMC_CAVEAT / ADAPTER_CONSTRAINTS below for
+//     exactly what is simplified (no SMT leg, 4h instead of the live 15m,
+//     4-day-bar windows locked).
 //   - crypto_flawless_victory used to be listed here too (long-only,
 //     signal-closed position — no engine support for that). engine.js now
 //     has an opt-in exit.mode:'signal' path (see its header comment) and
@@ -746,13 +746,51 @@ export const ADAPTER_METADATA = {
   crypto_mfi_engulfing_sl: { maxWindowDays: 365 },
   crypto_holy_grail_adx_sma_bb: { maxWindowDays: 365, note: 'requested windows resolving to CoinGecko /ohlc days=90 or days=180 buckets fail warmup — see ADAPTER_WARMUP_BARS comment' },
   crypto_holy_grail_adx_sma_bb_sl: { maxWindowDays: 365, note: 'requested windows resolving to CoinGecko /ohlc days=90 or days=180 buckets fail warmup — see ADAPTER_WARMUP_BARS comment' },
-  crypto_ict_smc: { maxWindowDays: 365, note: 'swing confirmation needs 5 trailing bars plus ATR(14) warmup — clears every /ohlc bucket except the very shortest (days=1)' },
-  crypto_ict_smc_sl: { maxWindowDays: 365, note: 'swing confirmation needs 5 trailing bars plus ATR(14) warmup — clears every /ohlc bucket except the very shortest (days=1)' },
+  crypto_ict_smc: { maxWindowDays: 30, note: 'locked above 30 days: longer windows come back from CoinGecko /ohlc as 4-day bars (see ADAPTER_CONSTRAINTS). days=1 (30m, ~48 bars) barely clears the 45-bar warmup.' },
+  crypto_ict_smc_sl: { maxWindowDays: 30, note: 'locked above 30 days (see crypto_ict_smc). Trailing exit is the generic ATR trail, not the swing-point anchor.' },
   crypto_sr_volume: { maxWindowDays: 365, note: 'ATR(50)+EMA(50) warmup (55 bars) only clears the days=365 bucket (~92 four-day bars) — days=90 (23 bars) and days=180 (45 bars) fail with insufficient_candle_history' },
   crypto_sr_volume_sl: { maxWindowDays: 365, note: 'ATR(50)+EMA(50) warmup (55 bars) only clears the days=365 bucket (~92 four-day bars) — days=90 (23 bars) and days=180 (45 bars) fail with insufficient_candle_history' },
   ict_sweep_mss: { maxWindowDays: 365, note: 'crypto candles here are CoinGecko /ohlc (4h bars up to 30 days, else 4-day bars) — the strategy\'s nominal 15m timeframe is not obtainable for BTC/ETH/SOL from this worker\'s data sources; see ICT_SWEEP_MSS_CAVEAT. Forex/index (EURUSD, SPX500, NAS100) backtests DO run on real Twelve Data 15m candles.' },
   ict_sweep_mss_sl: { maxWindowDays: 365, note: 'crypto candles here are CoinGecko /ohlc (4h bars up to 30 days, else 4-day bars) — the strategy\'s nominal 15m timeframe is not obtainable for BTC/ETH/SOL from this worker\'s data sources; see ICT_SWEEP_MSS_CAVEAT. Forex/index (EURUSD, SPX500, NAS100) backtests DO run on real Twelve Data 15m candles.' },
 };
+
+// Hard limits for strategies whose rules only make sense on certain candle
+// resolutions / asset classes. engine.js refuses a run outside them instead
+// of producing numbers that look real but test a different strategy (no
+// interpolation, no resampling to fake a finer series).
+//   timeframes: candle intervals fetchHistoricalCandles may return
+//     ('30m' | '4h' | '4d' for CoinGecko /ohlc — see candles.js).
+//   assetClasses: assetClassFor() values the strategy may run on.
+const ICT_SMC_CONSTRAINT = {
+  assetClasses: ['crypto'],
+  timeframes: ['30m', '4h'],
+  reason:
+    'ICT/SMC swing structure (5-left/5-right fractals, 20-bar retest window) is an intraday concept. CoinGecko /ohlc only returns 4h bars for windows up to 30 days (30m for 1 day); every longer window (31-365 days) is delivered as 4-DAY bars, where one swing spans 44 days and ATR(14) needs 56 days — that would test a different strategy, so those windows are locked. Pick a window of 30 days or less.',
+};
+export const ADAPTER_CONSTRAINTS = {
+  crypto_ict_smc: ICT_SMC_CONSTRAINT,
+  crypto_ict_smc_sl: ICT_SMC_CONSTRAINT,
+};
+
+/**
+ * Returns null when (assetClass, timeframe) is allowed for the strategy,
+ * else { error, message } for engine.js to return. `timeframe` may be null
+ * when not yet known (pre-fetch check on asset class only).
+ */
+export function checkAdapterConstraint(strategyId, assetClass, timeframe) {
+  const c = ADAPTER_CONSTRAINTS[strategyId];
+  if (!c) return null;
+  if (c.assetClasses && !c.assetClasses.includes(assetClass)) {
+    return {
+      error: 'unsupported_asset_class',
+      message: `${strategyId} is only backtestable on ${c.assetClasses.join('/')} symbols — the Pine strategy is crypto-only and this worker has no ICT-faithful forex/index feed for it.`,
+    };
+  }
+  if (timeframe && c.timeframes && !c.timeframes.includes(timeframe)) {
+    return { error: 'resolution_too_coarse', message: `Candle resolution ${timeframe} is not allowed: ${c.reason}`, timeframe };
+  }
+  return null;
+}
 
 export const ADAPTERS = {
   crypto_baseline: buildCryptoBaseline,
@@ -796,7 +834,10 @@ const ENGULFING_PATTERN_CAVEAT =
 const HOLY_GRAIL_PATTERN_CAVEAT =
   'Wick-touch-inside-band criterion uses real O/H/L/C (CoinGecko /ohlc), faithful to the Pine intent. Hammer/doji/engulfing pattern detection uses this backtest\'s own standard technical-analysis definitions — the original Pine source (a different, private repo) is not available to this project to match its exact geometry against.';
 const ICT_SMC_CAVEAT =
-  'Swing/BOS-CHoCH/order-block/FVG detection ports the algorithms validated in tradingview-bot/backtest/ict_smc/concepts.py, on real O/H/L/C from CoinGecko /ohlc. Simplified to a single timeframe: no separate HTF (4H/1H) key-level zones or London/NY session gate (htf_zone_touch is approximated as "price is inside an active LTF order block or FVG of the requested direction"), and no SMT divergence leg (needs a second correlated symbol\'s aligned swings) — confirmations_count only counts {bos, ob}, still gated at min_confirmations=2 so both must fire together.';
+  'Entry rules ported 1:1 from crypto_ict_smc.pine (swing 5/5, BOS/CHoCH on close, FVG >=0.3xATR, order block 1.5xATR, 20-bar BOS->zone retest, >=2 confirmations). Simplifications: (1) the SMT-divergence confirmation needs a second aligned symbol and is not available, so every entry needs BOS/CHoCH AND an order-block hit — stricter than live, expect fewer trades; (2) the live strategy runs on 15m, CoinGecko only delivers 4h bars (windows <=30 days; 30m for 1 day) — windows over 30 days would be 4-day bars and are locked; (3) crypto symbols only. Liquidity sweep / equilibrium / HTF zone type are payload telemetry in Pine and not entry gates, so they are not part of the backtest. ATR uses this engine\'s Wilder seed (one bar later than TradingView\'s) and pivot ties are strict (equal highs/lows are no swing).';
+const ICT_SMC_SL_CAVEAT =
+  ICT_SMC_CAVEAT +
+  ' TRAILING SL NOT FAITHFUL: the strategy declares a swing-point anchor (last HL/LH), but the engine\'s trailing mode only ratchets a generic ATR(14)x1.5 stop from the close and never reads the anchor — so this (SL) variant tests the entry rules with a different exit than the one intended. Do not read its result as the final ICT/SMC (SL) performance.';
 const SR_DYNAMIC_CAVEAT =
   'Uses "Support & Resistance Dynamic" (LuxAlgo) instead of this strategy\'s originally-intended true Volume Profile (VAL/VAH/POC) — same substitute tradingview-bot/backtest/config.py adopted on 2026-07-24 for the same reason: Volume Profile needs intrabar volume-at-price distribution CoinGecko\'s daily aggregate volume can\'t provide, while S&R Dynamic only needs real high/low/close (from CoinGecko /ohlc). The trend filter also reads EMA(50), not EMA(200) — a true EMA(200) never produces a finite value on /ohlc\'s much shorter real-candle series (see ADAPTER_WARMUP_BARS).';
 const ICT_SWEEP_MSS_CAVEAT =
@@ -811,7 +852,7 @@ export const PARTIAL_ADAPTERS = {
   crypto_holy_grail_adx_sma_bb: HOLY_GRAIL_PATTERN_CAVEAT,
   crypto_holy_grail_adx_sma_bb_sl: HOLY_GRAIL_PATTERN_CAVEAT,
   crypto_ict_smc: ICT_SMC_CAVEAT,
-  crypto_ict_smc_sl: ICT_SMC_CAVEAT,
+  crypto_ict_smc_sl: ICT_SMC_SL_CAVEAT,
   crypto_sr_volume: SR_DYNAMIC_CAVEAT,
   crypto_sr_volume_sl: SR_DYNAMIC_CAVEAT,
   ict_sweep_mss: ICT_SWEEP_MSS_CAVEAT,
@@ -820,4 +861,15 @@ export const PARTIAL_ADAPTERS = {
 
 export function getAdapter(strategyId) {
   return ADAPTERS[strategyId] ?? null;
+}
+
+/**
+ * 'none' (no adapter -> no_indicator_adapter), 'partial' (runs, but with a
+ * documented simplification — see PARTIAL_ADAPTERS) or 'full'. Single
+ * source of truth for the status the UI mirrors (src/lib/backtestAdapters.js,
+ * kept in sync by test/adapter-status-ui.test.js).
+ */
+export function getAdapterStatus(strategyId) {
+  if (!ADAPTERS[strategyId]) return 'none';
+  return PARTIAL_ADAPTERS[strategyId] ? 'partial' : 'full';
 }
