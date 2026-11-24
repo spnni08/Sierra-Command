@@ -374,7 +374,7 @@ export function applyGuardrails(aiData, direction) {
  * @returns {Promise<{ decisionId: string, decision: string, guardrailOverride: string|null, providerId: string|null, error: string|null, estimatedTarget: number|null, crv: number|null }>}
  */
 export async function runIctMtfPipeline(signal, env) {
-  const { symbol, direction, price, signalId, heatWall } = signal;
+  const { symbol, direction, price, signalId, heat_wall: heatWall } = signal;
 
   // Max one open trade per asset
   const alreadyOpen = await hasOpenAiDecision(symbol, env);
@@ -494,16 +494,22 @@ Bewerte jetzt die Checkliste und antworte mit dem JSON.`;
   let finalDecision = guardedDecision;
   let finalOverride = overrideReason;
 
-  if (finalDecision !== 'NO_TRADE' && aiData.entry != null && finalSl != null) {
-    estimatedTarget = findNearestSwingTarget(candles['15m'] ?? [], aiData.entry, direction);
-    if (estimatedTarget != null) {
-      crv = calculateCrv(aiData.entry, finalSl, estimatedTarget, direction);
-    }
-    if (crv == null || crv < MIN_CRV) {
+  if (finalDecision !== 'NO_TRADE') {
+    if (aiData.entry == null || finalSl == null) {
+      // Cannot evaluate CRV without both entry and SL
       finalDecision = 'NO_TRADE';
-      finalOverride = crv == null
-        ? `crv_no_target: kein Swing-Ziel in 15m-Daten gefunden`
-        : `crv_too_low: ${crv.toFixed(2)} < ${MIN_CRV}`;
+      finalOverride = 'crv_no_sl: AI did not provide entry or stop_loss';
+    } else {
+      estimatedTarget = findNearestSwingTarget(candles['15m'] ?? [], aiData.entry, direction);
+      if (estimatedTarget != null) {
+        crv = calculateCrv(aiData.entry, finalSl, estimatedTarget, direction);
+      }
+      if (crv == null || crv < MIN_CRV) {
+        finalDecision = 'NO_TRADE';
+        finalOverride = crv == null
+          ? `crv_no_target: kein Swing-Ziel in 15m-Daten gefunden`
+          : `crv_too_low: ${crv.toFixed(2)} < ${MIN_CRV}`;
+      }
     }
   }
 

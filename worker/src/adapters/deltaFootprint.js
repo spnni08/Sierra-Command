@@ -27,8 +27,13 @@
 //   }
 
 const BINANCE_FUTURES_BASE = 'https://fapi.binance.com';
-// Spot endpoint used as fallback if futures returns 451
+// Spot endpoint used as fallback if futures returns 451 (geoblocking)
 const BINANCE_SPOT_BASE = 'https://api.binance.com';
+// Futures uses /fapi/v1/aggTrades; Spot uses /api/v3/aggTrades
+const BINANCE_AGG_TRADES_PATH = {
+  [BINANCE_FUTURES_BASE]: '/fapi/v1/aggTrades',
+  [BINANCE_SPOT_BASE]: '/api/v3/aggTrades',
+};
 
 // Crypto symbols on Binance are pairs ending in USDT, BUSD, BTC, ETH, BNB.
 // Non-crypto symbols (EURUSD, US30, etc.) will not resolve on Binance.
@@ -65,7 +70,7 @@ export async function fetchDeltaFootprint(symbol, windowMs, _env) {
 
   for (const baseUrl of [BINANCE_FUTURES_BASE, BINANCE_SPOT_BASE]) {
     try {
-      const url = new URL(`${baseUrl}/fapi/v1/aggTrades`);
+      const url = new URL(`${baseUrl}${BINANCE_AGG_TRADES_PATH[baseUrl]}`);
       url.searchParams.set('symbol', symbol.toUpperCase());
       url.searchParams.set('startTime', String(startTime));
       url.searchParams.set('endTime', String(endTime));
