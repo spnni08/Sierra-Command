@@ -291,6 +291,17 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_source ON activity_log(source);
 CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_activity_log_related_trade_id ON activity_log(related_trade_id);
 
+-- AI provider daily usage tracking.
+-- One row per (provider_id, date). Updated by ai/client.js's incrementProviderUsage.
+-- HISTORY group may never consume more than (1 - live_reserve) × perDay requests
+-- per day — the remaining fraction is always reserved for LIVE calls.
+CREATE TABLE IF NOT EXISTS ai_provider_usage (
+  provider_id TEXT NOT NULL,
+  date TEXT NOT NULL,          -- UTC date 'YYYY-MM-DD'
+  request_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider_id, date)
+);
+
 -- AI decisions table — stores every ICT MTF Discretionary AI decision.
 -- Never auto-executed; display/confirmation flow only (see ai/ictMtfPipeline.js).
 -- One row per Pine alert that reached the AI pipeline. exited_at is set
@@ -317,6 +328,11 @@ CREATE TABLE IF NOT EXISTS ai_decisions (
   provider_attempts_json TEXT,
   -- Pipeline-level error (null on success)
   error TEXT,
+  -- CRV guardrail output: nearest swing target and computed CRV
+  estimated_target REAL,
+  crv REAL,
+  -- Optional heat_wall price from webhook payload (see ictMtfPipeline.js)
+  heat_wall REAL,
   -- Set when a counter-BOS/MS exit signal arrives for this decision
   exited_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

@@ -67,6 +67,12 @@ export function evaluate(signal) {
   return evaluateFactors({}, factors);
 }
 
+// Minimum risk/reward ratio required before confirming a decision.
+// CRV = (estimated_target - entry) / (entry - sl) for long; mirrored for short.
+// If the nearest swing target produces a CRV below this, decision → NO_TRADE.
+// Set to 0 to disable. Adjust here when the trading rules change.
+export const MIN_CRV = 2.0;
+
 // Exit configuration — no fixed TP; SL behind FVG zone.
 // The AI sets entry/sl; tp is null; exit_rule is gegen_bos_ms_15m.
 export const exit = { mode: 'signal' }; // exit on counter-BOS/MS signal

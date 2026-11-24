@@ -1,0 +1,28 @@
+# Sierra Command — local development secrets
+# Copy to .dev.vars and fill in your values.
+# These are Sierra-specific secrets — NEVER share with other projects.
+# Nova uses its own accounts; keys are never shared between deployments.
+#
+# BYOK (Bring Your Own Key) overrides take precedence over base keys:
+#   SIERRA_AI_BYOK_<PROVIDER_ID_UPPER> → user-supplied key (checked first)
+#   SIERRA_AI_KEY_<PROVIDER_ID_UPPER>  → deployed CF Workers secret
+
+# --- LIVE group (latency priority) ---
+SIERRA_AI_KEY_GROQ=
+SIERRA_AI_KEY_CEREBRAS=
+SIERRA_AI_KEY_GEMINI=
+
+# --- HISTORY group (batch/cache priority) ---
+SIERRA_AI_KEY_MISTRAL=
+# HISTORY also uses CEREBRAS and GEMINI (same key as above)
+SIERRA_AI_KEY_OPENROUTER=
+
+# --- BYOK overrides (optional, takes precedence over base keys above) ---
+# SIERRA_AI_BYOK_GROQ=
+# SIERRA_AI_BYOK_CEREBRAS=
+# SIERRA_AI_BYOK_GEMINI=
+# SIERRA_AI_BYOK_MISTRAL=
+# SIERRA_AI_BYOK_OPENROUTER=
+
+# --- Other secrets ---
+WEBHOOK_SECRET=
