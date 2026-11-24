@@ -23,6 +23,7 @@ import * as cryptoHolyGrailAdxSmaBb from './cryptoHolyGrailAdxSmaBb.js';
 import * as cryptoBbRsiTrendfilter from './cryptoBbRsiTrendfilter.js';
 import * as ictSweepMss from './ictSweepMss.js';
 import * as scKeylevelSweep from './scKeylevelSweep.js';
+import * as ictMtfDiscretionary from './ictMtfDiscretionary.js';
 
 // Order matches worker.js STRATEGIES registration order (crypto_baseline
 // first as the control group, then the rest in tradingview-bot integration
@@ -152,6 +153,22 @@ STRATEGY_REGISTRY.sc_keylevel_sweep = {
   disableShorts: false,
   evaluate: scKeylevelSweep.evaluate,
   exit: scKeylevelSweep.exit,
+};
+
+// ict_mtf_discretionary — AI-driven ICT Multi-Timeframe discretionary strategy.
+// No "(SL)" trailing variant: exit is gegen_bos_ms_15m (counter-structure signal),
+// not a fixed bracket or trailing stop. SL is AI-derived (behind FVG zone).
+// Registered directly (not via buildRegistry) because it has a unique AI-pipeline
+// flow distinct from every other strategy here — see routes/webhook.js's
+// handleIctMtfDiscretionary and ai/ictMtfPipeline.js.
+STRATEGY_REGISTRY.ict_mtf_discretionary = {
+  key: ictMtfDiscretionary.key,
+  label: ictMtfDiscretionary.label,
+  assetClass: ictMtfDiscretionary.assetClass,
+  cooldownMinutes: null,
+  disableShorts: false,
+  evaluate: ictMtfDiscretionary.evaluate,
+  exit: ictMtfDiscretionary.exit,
 };
 
 export function getStrategy(strategyKey) {

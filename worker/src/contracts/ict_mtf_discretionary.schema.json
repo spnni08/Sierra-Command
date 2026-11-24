@@ -1,0 +1,13 @@
+{
+  "strategyId": "ict_mtf_discretionary",
+  "requiredFields": [
+    "symbol",
+    "direction",
+    "price"
+  ],
+  "optionalFields": [
+    "timeframe",
+    "is_test",
+    "secret"
+  ]
+}

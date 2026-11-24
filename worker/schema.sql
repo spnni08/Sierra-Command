@@ -291,6 +291,41 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_source ON activity_log(source);
 CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_activity_log_related_trade_id ON activity_log(related_trade_id);
 
+-- AI decisions table — stores every ICT MTF Discretionary AI decision.
+-- Never auto-executed; display/confirmation flow only (see ai/ictMtfPipeline.js).
+-- One row per Pine alert that reached the AI pipeline. exited_at is set
+-- externally (e.g. counter-BOS/MS signal) — no auto-close cron touches this.
+CREATE TABLE IF NOT EXISTS ai_decisions (
+  id TEXT PRIMARY KEY,
+  signal_id TEXT REFERENCES signals(id),
+  symbol TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('long','short')),
+  price REAL NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('LONG','SHORT','NO_TRADE')),
+  -- JSON array of {id, met, evidence} — one entry per CHECKLIST factor
+  factors_json TEXT NOT NULL DEFAULT '[]',
+  entry REAL,
+  stop_loss REAL,
+  exit_rule TEXT NOT NULL DEFAULT 'gegen_bos_ms_15m',
+  confidence REAL,
+  reason TEXT,
+  -- Set when a deterministic guardrail overrode the AI's decision
+  guardrail_override TEXT,
+  -- Which provider responded (null = all failed / no AI call)
+  provider_id TEXT,
+  -- JSON array of {providerId, error} from failed attempts before success
+  provider_attempts_json TEXT,
+  -- Pipeline-level error (null on success)
+  error TEXT,
+  -- Set when a counter-BOS/MS exit signal arrives for this decision
+  exited_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_symbol ON ai_decisions(symbol);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_decision ON ai_decisions(decision);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_created_at ON ai_decisions(created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_signal_id ON ai_decisions(signal_id);
+
 -- Seed / test data ----------------------------------------------------------
 -- The 22 WAVESCOUT strategies (11 base + their trailing-SL "(SL)" variants),
 -- ported from spnni08/tradingview-bot worker.js STRATEGIES /
@@ -449,7 +484,14 @@ INSERT OR IGNORE INTO strategies (id, name, asset_classes, active, factor_defini
   -- today, and this strategy's logic only means anything on 5m candles.
   ('sc_keylevel_sweep', 'SC Key-Level Sweep', '["BTCUSDT","ETHUSDT","SOLUSDT","EURUSD","SPX500","NAS100"]', 1,
     '{"factors":["liquidity_sweep","choch_confirmed","entry_close_in_zone","confluence_min_ok","min_rr_ok","not_invalidated"],"exit_mode":"levels","sessions":{"asia":"01:00-09:00","london":"09:00-14:30","new_york":"14:30-22:00","tz":"Europe/Berlin"},"choch_timeout_min":120,"min_rr":1.0,"min_confluence":1,"backtest_status":"no_adapter_needs_5m_candles"}',
-    '2026-09-23 22:30:00', '2026-09-23 22:30:00');
+    '2026-09-23 22:30:00', '2026-09-23 22:30:00'),
+  -- ict_mtf_discretionary — Marvin's ICT Multi-Timeframe discretionary strategy.
+  -- AI-driven checklist evaluation (see worker/src/ai/ictMtfPipeline.js).
+  -- No trailing-SL variant (exit on counter-BOS/MS signal). No backtest adapter
+  -- (AI-derived factors cannot be replayed on historical candles alone).
+  ('ict_mtf_discretionary', 'ICT MTF (Diskretionär)', '["BTCUSDT","ETHUSDT","SOLUSDT"]', 1,
+    '{"factors":["bias_1h4h","bos_ms_15m","fvg_retest_15m","footprint_delta_5m"],"exit_mode":"signal","exit_rule":"gegen_bos_ms_15m","ai_driven":true,"live_provider_pool":["groq","cerebras_live","gemini_flash_live"],"backtest_status":"no_adapter_ai_driven"}',
+    '2026-11-24 00:00:00', '2026-11-24 00:00:00');
 
 -- Deliberately does NOT list params_json here, even though the CREATE TABLE
 -- above declares it: on the already-live remote D1, this file's own CREATE
@@ -492,7 +534,8 @@ INSERT OR IGNORE INTO strategy_settings (strategy_id, risk_per_trade_pct, sessio
   ('crypto_bb_rsi_trendfilter_sl', 1.0, '[]', 0.7, 0.5),
   ('ict_sweep_mss', 1.0, '[]', 0.7, 0.5),
   ('ict_sweep_mss_sl', 1.0, '[]', 0.7, 0.5),
-  ('sc_keylevel_sweep', 1.0, '[]', 0.7, 0.5);
+  ('sc_keylevel_sweep', 1.0, '[]', 0.7, 0.5),
+  ('ict_mtf_discretionary', 1.0, '[]', 0.7, 0.5);
 
 -- No seed trades/activity_log/backtest_runs rows here on purpose — see the
 -- DELETEs above. From here on these tables only ever hold rows written by
