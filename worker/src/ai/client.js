@@ -4,6 +4,12 @@
 // Failover: on 429 or provider-unavailable, skips to the next in priority order.
 // Invalid JSON or missing required fields → NO_TRADE (never guess/hallucinate).
 // CF Workers AI uses env.AI binding (no HTTP call, different call path).
+//
+// Daily rate-limit enforcement:
+//   LIVE group: may use the full perDay quota.
+//   HISTORY group: may only use up to (1 - live_reserve) × perDay requests,
+//   so the remaining live_reserve fraction is always available for LIVE calls.
+//   Usage is tracked per provider per UTC day in the ai_provider_usage table.
 
 import { getProviders, getApiKey } from './providers.js';
 
@@ -89,6 +95,89 @@ function extractJson(text) {
 }
 
 /**
+ * Returns today's UTC date as 'YYYY-MM-DD'.
+ * @returns {string}
+ */
+function todayUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Returns today's request count for a provider from the usage table.
+ * Returns 0 when no row exists or on DB error.
+ * @param {string} providerId
+ * @param {object} env
+ * @returns {Promise<number>}
+ */
+export async function getProviderUsage(providerId, env) {
+  if (!env?.DB) return 0;
+  try {
+    const row = await env.DB.prepare(
+      'SELECT request_count FROM ai_provider_usage WHERE provider_id = ? AND date = ?'
+    )
+      .bind(providerId, todayUtc())
+      .first();
+    return row?.request_count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Increments today's request count for a provider.
+ * Uses two-step SELECT + UPDATE/INSERT for compatibility with
+ * both real D1 and the in-memory test double (fakeD1).
+ * Silently ignores DB errors (usage tracking must never block a trade decision).
+ * @param {string} providerId
+ * @param {object} env
+ * @returns {Promise<void>}
+ */
+export async function incrementProviderUsage(providerId, env) {
+  if (!env?.DB) return;
+  const today = todayUtc();
+  try {
+    const row = await env.DB.prepare(
+      'SELECT request_count FROM ai_provider_usage WHERE provider_id = ? AND date = ?'
+    )
+      .bind(providerId, today)
+      .first();
+    if (row) {
+      await env.DB.prepare(
+        'UPDATE ai_provider_usage SET request_count = ? WHERE provider_id = ? AND date = ?'
+      )
+        .bind(row.request_count + 1, providerId, today)
+        .run();
+    } else {
+      await env.DB.prepare(
+        'INSERT INTO ai_provider_usage (provider_id, date, request_count) VALUES (?,?,?)'
+      )
+        .bind(providerId, today, 1)
+        .run();
+    }
+  } catch {
+    // Silently ignore — usage tracking must never block a decision
+  }
+}
+
+/**
+ * Returns true if the provider's daily quota allows another call for the
+ * given group. HISTORY group respects the live_reserve cap; LIVE does not.
+ * @param {import('./providers.js').Provider} provider
+ * @param {'live'|'history'} group
+ * @param {number} usageCount today's count
+ * @returns {boolean}
+ */
+export function isUnderDailyLimit(provider, group, usageCount) {
+  const { perDay } = provider.rateLimit;
+  if (group === 'live') {
+    return usageCount < perDay;
+  }
+  // HISTORY must not consume the live_reserve fraction
+  const historyLimit = Math.floor(perDay * (1 - (provider.live_reserve ?? 0)));
+  return usageCount < historyLimit;
+}
+
+/**
  * Calls a single OpenAI-compatible provider.
  * @param {import('./providers.js').Provider} provider
  * @param {string} systemPrompt
@@ -171,6 +260,7 @@ async function callCfWorkersAi(provider, systemPrompt, userPrompt, env) {
 /**
  * Calls the provider pool in priority order, returns the first valid
  * structured JSON response. Falls back to NO_TRADE on all failures.
+ * Respects daily quota limits (live_reserve cap for HISTORY group).
  *
  * @param {'live'|'history'} group
  * @param {string} systemPrompt
@@ -184,6 +274,13 @@ export async function callProviderPool(group, systemPrompt, userPrompt, factorId
   const attempts = [];
 
   for (const provider of providers) {
+    // Check daily quota before calling
+    const usage = await getProviderUsage(provider.id, env);
+    if (!isUnderDailyLimit(provider, group, usage)) {
+      attempts.push({ providerId: provider.id, error: `daily_limit_${group === 'history' ? 'history_cap' : 'exceeded'}`, usage });
+      continue;
+    }
+
     let callResult;
     if (provider.id === 'cf_workers_ai') {
       callResult = await callCfWorkersAi(provider, systemPrompt, userPrompt, env);
@@ -210,6 +307,9 @@ export async function callProviderPool(group, systemPrompt, userPrompt, factorId
       attempts.push({ providerId: provider.id, error: `validation_failed: ${validation.error}` });
       continue;
     }
+
+    // Successful call — record usage
+    await incrementProviderUsage(provider.id, env);
 
     return { data: validation.data, providerId: provider.id };
   }

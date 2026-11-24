@@ -8,6 +8,7 @@
   "optionalFields": [
     "timeframe",
     "is_test",
-    "secret"
+    "secret",
+    "heat_wall"
   ]
 }

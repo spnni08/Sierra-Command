@@ -10,12 +10,16 @@
 //             Cloudflare Workers AI, OpenRouter (last resort).
 //
 // Rate limits are config, not code — change here when provider limits change.
-// Keys come from env secrets or BYOK (user-supplied via /api/ai-key route).
-// Cloudflare Workers AI uses a Binding (env.AI), no key needed.
+// live_reserve: fraction of perDay the HISTORY group must never consume.
+//   e.g. 0.3 = HISTORY stops at 70% usage, reserving 30% for LIVE calls.
+//   LIVE always has access to the full perDay limit.
 //
-// On 429 or exhausted daily limit: skip to next provider in priority order.
+// Keys are Sierra-specific secrets — NEVER share with other projects:
+//   SIERRA_AI_KEY_<PROVIDER_ID_UPPER>   — deployed CF Workers secret
+//   SIERRA_AI_BYOK_<PROVIDER_ID_UPPER>  — user-supplied BYOK key (takes precedence)
+//   Cloudflare Workers AI uses a Binding (env.AI), no key needed.
 
-/** @typedef {{ id: string, label: string, group: 'live'|'history', priority: number, model: string, baseUrl: string, envKey: string|null, rateLimit: { perMinute: number, perDay: number } }} Provider */
+/** @typedef {{ id: string, label: string, group: 'live'|'history', priority: number, model: string, baseUrl: string|null, envKey: string|null, rateLimit: { perMinute: number, perDay: number }, live_reserve: number }} Provider */
 
 /** @type {Provider[]} */
 export const PROVIDERS = [
@@ -27,8 +31,9 @@ export const PROVIDERS = [
     priority: 1,
     model: 'llama-3.3-70b-versatile',
     baseUrl: 'https://api.groq.com/openai/v1',
-    envKey: 'AI_KEY_GROQ',
+    envKey: 'SIERRA_AI_KEY_GROQ',
     rateLimit: { perMinute: 30, perDay: 14400 },
+    live_reserve: 0.3,
   },
   {
     id: 'cerebras_live',
@@ -37,8 +42,9 @@ export const PROVIDERS = [
     priority: 2,
     model: 'llama3.3-70b',
     baseUrl: 'https://api.cerebras.ai/v1',
-    envKey: 'AI_KEY_CEREBRAS',
+    envKey: 'SIERRA_AI_KEY_CEREBRAS',
     rateLimit: { perMinute: 30, perDay: 14400 },
+    live_reserve: 0.3,
   },
   {
     id: 'gemini_flash_live',
@@ -47,8 +53,9 @@ export const PROVIDERS = [
     priority: 3,
     model: 'gemini-2.0-flash',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    envKey: 'AI_KEY_GEMINI',
+    envKey: 'SIERRA_AI_KEY_GEMINI',
     rateLimit: { perMinute: 15, perDay: 1500 },
+    live_reserve: 0.3,
   },
 
   // --- HISTORY group (batch/cache priority) ---
@@ -61,8 +68,9 @@ export const PROVIDERS = [
     // history/backtest with public market data. NEVER for live decisions.
     model: 'mistral-small-latest',
     baseUrl: 'https://api.mistral.ai/v1',
-    envKey: 'AI_KEY_MISTRAL',
+    envKey: 'SIERRA_AI_KEY_MISTRAL',
     rateLimit: { perMinute: 5, perDay: 500 },
+    live_reserve: 0.3,
   },
   {
     id: 'cerebras_history',
@@ -71,8 +79,9 @@ export const PROVIDERS = [
     priority: 2,
     model: 'llama3.3-70b',
     baseUrl: 'https://api.cerebras.ai/v1',
-    envKey: 'AI_KEY_CEREBRAS',
+    envKey: 'SIERRA_AI_KEY_CEREBRAS',
     rateLimit: { perMinute: 30, perDay: 14400 },
+    live_reserve: 0.3,
   },
   {
     id: 'gemini_flash_history',
@@ -81,8 +90,9 @@ export const PROVIDERS = [
     priority: 3,
     model: 'gemini-2.0-flash',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    envKey: 'AI_KEY_GEMINI',
+    envKey: 'SIERRA_AI_KEY_GEMINI',
     rateLimit: { perMinute: 15, perDay: 1500 },
+    live_reserve: 0.3,
   },
   {
     id: 'cf_workers_ai',
@@ -94,6 +104,7 @@ export const PROVIDERS = [
     baseUrl: null,
     envKey: null, // CF binding: env.AI.run(model, messages)
     rateLimit: { perMinute: 50, perDay: 10000 },
+    live_reserve: 0.3,
   },
   {
     id: 'openrouter',
@@ -102,8 +113,9 @@ export const PROVIDERS = [
     priority: 5,
     model: 'meta-llama/llama-3.3-70b-instruct',
     baseUrl: 'https://openrouter.ai/api/v1',
-    envKey: 'AI_KEY_OPENROUTER',
+    envKey: 'SIERRA_AI_KEY_OPENROUTER',
     rateLimit: { perMinute: 10, perDay: 200 },
+    live_reserve: 0.3,
   },
 ];
 
@@ -118,14 +130,14 @@ export function getProviders(group) {
 
 /**
  * Returns the API key for a provider from env secrets or BYOK.
- * BYOK keys are stored as env.AI_BYOK_<PROVIDER_ID_UPPER>.
+ * Sierra-specific naming: SIERRA_AI_BYOK_<PROVIDER_ID_UPPER> takes precedence
+ * over SIERRA_AI_KEY_<PROVIDER_ID_UPPER>.
  * @param {Provider} provider
  * @param {object} env Cloudflare Worker env
  * @returns {string|null}
  */
 export function getApiKey(provider, env) {
   if (!provider.envKey) return null; // CF Workers AI binding
-  // BYOK takes precedence over deployed secret
-  const byokKey = `AI_BYOK_${provider.id.toUpperCase()}`;
+  const byokKey = `SIERRA_AI_BYOK_${provider.id.toUpperCase()}`;
   return env[byokKey] || env[provider.envKey] || null;
 }

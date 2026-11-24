@@ -39,6 +39,7 @@ export function createFakeD1(overrides = {}) {
     strategy_settings: [],
     app_settings: appSettings,
     ai_decisions: [],
+    ai_provider_usage: [],
   };
 
   function insert(sql, args) {
@@ -125,6 +126,14 @@ export function createFakeD1(overrides = {}) {
       return selectStrategyRiskContext(args);
     }
     // hasOpenAiDecision: SELECT id FROM ai_decisions WHERE symbol = ? AND decision IN (...) AND exited_at IS NULL LIMIT 1
+    // getProviderUsage: SELECT request_count FROM ai_provider_usage WHERE provider_id = ? AND date = ?
+    if (/FROM ai_provider_usage/i.test(sql) && /request_count/i.test(sql)) {
+      const [providerId, date] = args;
+      const row = (tables.ai_provider_usage ?? []).find(
+        (r) => r.provider_id === providerId && r.date === date
+      );
+      return row ?? null;
+    }
     if (/FROM ai_decisions/i.test(sql) && /decision IN/i.test(sql) && /exited_at IS NULL/i.test(sql)) {
       const symbol = args[0];
       const row = (tables.ai_decisions ?? []).find(
@@ -176,6 +185,17 @@ export function createFakeD1(overrides = {}) {
         },
         async run() {
           if (/^\s*INSERT/i.test(sql)) return { results: [insert(sql, this._args)] };
+          if (/^\s*UPDATE/i.test(sql)) {
+            // UPDATE <table> SET <col> = ? WHERE <col> = ? AND <col> = ?
+            const m = sql.match(/^\s*UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*\?\s+WHERE\s+(.+)$/is);
+            if (!m) throw new Error(`fakeD1: cannot parse UPDATE: ${sql}`);
+            const [, table, setCol, whereSql] = m;
+            const setValue = this._args[0];
+            const whereArgs = this._args.slice(1);
+            const rows = applyConditions(tables[table] ?? [], parseConditions(whereSql), whereArgs);
+            rows.forEach((r) => { r[setCol] = setValue; });
+            return { results: rows };
+          }
           throw new Error(`fakeD1: unsupported .run() SQL: ${sql}`);
         },
         async first() {
