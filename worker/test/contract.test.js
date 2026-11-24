@@ -36,6 +36,7 @@ const MODULE_FILE_BY_ID = {
   crypto_bb_rsi_trendfilter: 'cryptoBbRsiTrendfilter.js',
   ict_sweep_mss: 'ictSweepMss.js',
   sc_keylevel_sweep: 'scKeylevelSweep.js',
+  ict_mtf_discretionary: 'ictMtfDiscretionary.js',
 };
 
 const schemaFiles = readdirSync(contractsDir).filter((f) => f.endsWith('.schema.json'));

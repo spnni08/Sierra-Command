@@ -29,6 +29,7 @@ import { evaluateSignal, getStrategy } from '../strategies/index.js';
 import { DEFAULT_EXIT } from '../strategies/shared.js';
 import { checkRiskRules, checkSessionFilter, describeRiskRejection } from '../risk/riskEngine.js';
 import { berlinDateParts, berlinDayRangeUtc } from '../lib/berlinDay.js';
+import { runIctMtfPipeline } from '../ai/ictMtfPipeline.js';
 
 export async function handleWebhookRoute(request, url, env) {
   const match = url.pathname.match(/^\/webhook\/([a-zA-Z0-9_-]+)$/);
@@ -311,6 +312,35 @@ async function processWebhook(request, env, strategyKey) {
   )
     .bind(signalId, strategyKey, symbol, ts, legacyPassed ? 1 : 0, factorState, dbExitMode(strategy.exit.mode), ts)
     .run();
+
+  // ICT MTF Discretionary: AI-pipeline path — produces a decision record
+  // (ai_decisions table), never a trade directly. No risk gate, no fan-out.
+  // Returned immediately so the standard trade-opening path below is skipped.
+  if (strategyKey === 'ict_mtf_discretionary') {
+    const pipelineResult = await runIctMtfPipeline(
+      { symbol, direction, price: entry, signalId },
+      env
+    );
+    await logActivity(
+      env,
+      'system',
+      `Webhook /webhook/ict_mtf_discretionary ${symbol}: AI-Entscheidung ${pipelineResult.decision}${pipelineResult.guardrailOverride ? ` (Leitplanke: ${pipelineResult.guardrailOverride})` : ''}${pipelineResult.error ? ` [Fehler: ${pipelineResult.error}]` : ''}`,
+      request
+    );
+    return Response.json({
+      data: {
+        accepted: true,
+        strategyKey,
+        symbol,
+        signalId,
+        decisionId: pipelineResult.decisionId,
+        decision: pipelineResult.decision,
+        guardrailOverride: pipelineResult.guardrailOverride,
+        providerId: pipelineResult.providerId,
+        error: pipelineResult.error,
+      },
+    });
+  }
 
   // Risk gate — evaluated once for the whole signal (base + paired "(SL)"
   // trade share this one decision, per the 2026-09-25 "count as one

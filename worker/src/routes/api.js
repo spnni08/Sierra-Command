@@ -79,6 +79,10 @@ export async function handleApiRoute(request, url, env) {
     return patchStrategy(request, env, strategyMatch[1]);
   }
 
+  if (path === '/ai-decisions' && request.method === 'GET') {
+    return getAiDecisions(url, env);
+  }
+
   return Response.json({ error: 'not_found', path }, { status: 404 });
 }
 
@@ -466,6 +470,36 @@ async function getCredentials(env) {
       'SELECT id, provider, env, created_at FROM api_credentials ORDER BY provider, env'
     ).all();
     return Response.json({ data: results });
+  } catch (err) {
+    return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
+  }
+}
+
+async function getAiDecisions(url, env) {
+  const symbol = url.searchParams.get('symbol') ?? null;
+  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 200);
+
+  try {
+    let query = `SELECT id, signal_id, symbol, direction, price, decision,
+                        factors_json, entry, stop_loss, exit_rule, confidence,
+                        reason, guardrail_override, provider_id, error,
+                        exited_at, created_at
+                 FROM ai_decisions`;
+    const binds = [];
+    if (symbol) {
+      query += ' WHERE symbol = ?';
+      binds.push(symbol.toUpperCase());
+    }
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    binds.push(limit);
+
+    const { results } = await env.DB.prepare(query).bind(...binds).all();
+    const data = results.map((row) => ({
+      ...row,
+      factors: parseJsonColumn(row.factors_json, []),
+      factors_json: undefined,
+    }));
+    return Response.json({ data });
   } catch (err) {
     return Response.json({ error: 'db_error', message: err.message }, { status: 500 });
   }

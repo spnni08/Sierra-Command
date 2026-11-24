@@ -38,10 +38,11 @@ export function createFakeD1(overrides = {}) {
     strategies: [],
     strategy_settings: [],
     app_settings: appSettings,
+    ai_decisions: [],
   };
 
   function insert(sql, args) {
-    const m = sql.match(/INSERT INTO (\w+) \(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/is);
+    const m = sql.match(/INSERT INTO (\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/is);
     if (!m) throw new Error(`fakeD1: cannot parse INSERT: ${sql}`);
     const table = m[1];
     const columns = m[2].split(',').map((c) => c.trim());
@@ -123,6 +124,14 @@ export function createFakeD1(overrides = {}) {
     if (/FROM strategies s\s+LEFT JOIN strategy_settings/is.test(sql)) {
       return selectStrategyRiskContext(args);
     }
+    // hasOpenAiDecision: SELECT id FROM ai_decisions WHERE symbol = ? AND decision IN (...) AND exited_at IS NULL LIMIT 1
+    if (/FROM ai_decisions/i.test(sql) && /decision IN/i.test(sql) && /exited_at IS NULL/i.test(sql)) {
+      const symbol = args[0];
+      const row = (tables.ai_decisions ?? []).find(
+        (r) => r.symbol === symbol && (r.decision === 'LONG' || r.decision === 'SHORT') && r.exited_at == null
+      );
+      return row ?? null;
+    }
     const star = sql.match(/^\s*SELECT \* FROM (\w+) WHERE (.+?)\s*(?:LIMIT|$)/is);
     if (star) {
       const [, table, whereSql] = star;
@@ -201,6 +210,7 @@ export function createFakeD1(overrides = {}) {
     'crypto_bb_rsi_trendfilter', 'crypto_bb_rsi_trendfilter_sl',
     'ict_sweep_mss', 'ict_sweep_mss_sl',
     'sc_keylevel_sweep',
+    'ict_mtf_discretionary',
   ];
   for (const id of KNOWN_STRATEGY_IDS) {
     tables.strategies.push({ id, active: 1 });
